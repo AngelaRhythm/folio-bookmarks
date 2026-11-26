@@ -8,7 +8,8 @@ import {
   isCapturableUrl,
   isLikelyInternalFolder,
   isPrivateOrInternalUrl,
-  normalizeUrl
+  normalizeUrl,
+  toSafePublicOrigin
 } from './shared/url.js';
 import {
   clearAllThumbnails,
@@ -44,6 +45,7 @@ const state = {
     sidebarCollapsed: false,
     ttlDays: 30,
     autoCapture: true,
+    remoteCoverEnabled: false,
     initialCapturePrompted: false,
     favoriteKeys: [],
     excludedFolderIds: null
@@ -53,6 +55,7 @@ const state = {
   folderMap: new Map(),    // folderId -> folder node (with recursive items & children)
   allBookmarks: [],        // Flat list of all bookmarks with folder metadata
   looseBookmarks: [],      // Bookmarks sitting directly on bookmark bar / other root
+  excludedKeys: new Set(), // Normalized URL keys excluded by any folder or internal host rule
   selectedFolderId: 'all', // 'all' | 'loose' | <folderId>
   activeSubfolderId: 'all',
   expandedSidebarFolders: new Set(),
@@ -63,7 +66,7 @@ const state = {
   duplicates: [],
   batch: { running: false, current: 0, total: 0, captured: 0, failed: 0, currentTitle: '' },
   spotlight: { open: false, query: '', results: [], activeIndex: 0 },
-  tidy: { open: false, tab: 'settings', stats: { count: 0, totalBytes: 0 } },
+  tidy: { open: false, tab: 'settings', stats: { count: 0, totalBytes: 0 }, folderPickerOpen: false },
   dragBookmarkId: null,
   contextBookmarkId: null
 };
@@ -84,19 +87,18 @@ const els = {
   onboardingMark: document.getElementById('onboarding-mark'),
   onboardingDesc: document.getElementById('onboarding-desc'),
   btnOnboardingStart: document.getElementById('btn-onboarding-start'),
-  btnOnboardingSkip: document.getElementById('btn-onboarding-skip'),
   topbar: document.getElementById('topbar'),
-  viewTitle: document.getElementById('view-title'),
-  viewCount: document.getElementById('view-count'),
   batchBanner: document.getElementById('batch-banner'),
   batchBannerText: document.getElementById('batch-banner-text'),
   batchBarFill: document.getElementById('batch-bar-fill'),
   subfolderBar: document.getElementById('subfolder-bar'),
   galleryRoot: document.getElementById('gallery-root'),
+  galleryFooter: document.getElementById('gallery-footer'),
+  btnBackToTop: document.getElementById('btn-back-to-top'),
   spotlightOverlay: document.getElementById('spotlight-overlay'),
   spotlightInput: document.getElementById('spotlight-input'),
   spotlightResults: document.getElementById('spotlight-results'),
-  tidyOverlay: document.getElementById('tidy-overlay'),
+  settingsPane: document.getElementById('settings-pane'),
   btnCloseTidy: document.getElementById('btn-close-tidy'),
   tidyTabs: document.getElementById('tidy-tabs'),
   tidyContent: document.getElementById('tidy-content'),
@@ -214,8 +216,9 @@ function parseBookmarkTree(tree) {
     state.rootBarId = systemContainers[0].id;
   }
 
-  function processFolder(node, topFolderId, topFolderTitle, pathParts, depth) {
+  function processFolder(node, topFolderId, topFolderTitle, pathParts, ancestorIds, depth) {
     const currentPath = [...pathParts, node.title];
+    const currentAncestors = [...ancestorIds, node.id];
     const folderObj = {
       id: node.id,
       parentId: node.parentId,
@@ -237,6 +240,7 @@ function parseBookmarkTree(tree) {
         const bm = {
           id: child.id,
           parentId: node.id,
+          ancestorFolderIds: currentAncestors,
           title: child.title || getDisplayHost(child.url),
           url: child.url,
           key: normalizeUrl(child.url),
@@ -252,7 +256,7 @@ function parseBookmarkTree(tree) {
         folderObj.allBookmarks.push(bm);
         allBookmarks.push(bm);
       } else if (child.children) {
-        const sub = processFolder(child, topFolderId, topFolderTitle, currentPath, depth + 1);
+        const sub = processFolder(child, topFolderId, topFolderTitle, currentPath, currentAncestors, depth + 1);
         folderObj.subfolders.push(sub);
         folderObj.allBookmarks.push(...sub.allBookmarks);
       }
@@ -270,6 +274,7 @@ function parseBookmarkTree(tree) {
         const bm = {
           id: child.id,
           parentId: container.id,
+          ancestorFolderIds: [container.id],
           title: child.title || getDisplayHost(child.url),
           url: child.url,
           key: normalizeUrl(child.url),
@@ -284,7 +289,7 @@ function parseBookmarkTree(tree) {
         looseBookmarks.push(bm);
         allBookmarks.push(bm);
       } else if (child.children) {
-        const folderObj = processFolder(child, child.id, child.title || '未命名文件夹', [], 0);
+        const folderObj = processFolder(child, child.id, child.title || '未命名文件夹', [], [], 0);
         topFolders.push(folderObj);
       }
     }
@@ -303,6 +308,7 @@ function parseBookmarkTree(tree) {
     state.prefs.excludedFolderIds = detected;
     savePreferences({ excludedFolderIds: detected });
   }
+  rebuildExcludedKeySet();
 
   // Validate currently selected folder still exists
   if (
@@ -336,6 +342,7 @@ const systemDarkQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
 function applyTheme() {
   document.documentElement.setAttribute('data-theme', systemDarkQuery.matches ? 'dark' : 'light');
+  updateCustomCursorTheme();
 }
 
 function applyLayoutPreferences() {
@@ -488,7 +495,6 @@ async function toggleFavoriteKey(key, title = '') {
     btn.classList.toggle('is-favorited', added);
     btn.setAttribute('aria-pressed', added ? 'true' : 'false');
     btn.setAttribute('aria-label', added ? '取消收藏' : '加入顶部收藏');
-    btn.title = added ? '取消收藏' : '加入顶部收藏';
     btn.innerHTML = added ? ICONS.starFilled : ICONS.star;
   });
 
@@ -567,7 +573,8 @@ function createCardElement(bm, index) {
 
   const faviconUrl = getFaviconUrl(bm.url, 32);
   const initialLetter = escapeHtml((bm.host || bm.title || '?')[0].toUpperCase());
-  const hasThumbMeta = state.thumbMeta.has(bm.key);
+  const hideCover = isBookmarkExcludedFromCover(bm);
+  const hasThumbMeta = !hideCover && state.thumbMeta.has(bm.key);
   const isNew = isNewBookmark(bm);
   const isFav = isFavoriteKey(bm.key);
   const subtitle = bm.host;
@@ -592,14 +599,14 @@ function createCardElement(bm, index) {
           <div class="placeholder-icon-wrap">${placeholderFaviconHtml}</div>
           <span class="placeholder-host">${escapeHtml(bm.host)}</span>
         </div>
-        <img class="card-thumb" data-thumb-key="${escapeHtml(bm.key)}" alt="" decoding="async" />
+        ${hideCover ? '' : `<img class="card-thumb" data-thumb-key="${escapeHtml(bm.key)}" alt="" decoding="async" />`}
       </a>
       <div class="card-actions">
-        <button type="button" class="card-action-btn" data-action="recapture" data-id="${escapeHtml(bm.id)}" title="重新抓取首屏" aria-label="重新抓取首屏">${ICONS.refresh}</button>
-        <button type="button" class="card-action-btn" data-action="copy" data-id="${escapeHtml(bm.id)}" title="复制链接" aria-label="复制链接">${ICONS.copy}</button>
-        <button type="button" class="card-action-btn" data-action="move" data-id="${escapeHtml(bm.id)}" title="移动到其他文件夹" aria-label="移动到其他文件夹">${ICONS.move}</button>
+        ${!hideCover && state.prefs.remoteCoverEnabled && toSafePublicOrigin(bm.url) ? `<button type="button" class="card-action-btn" data-action="recapture" data-id="${escapeHtml(bm.id)}" aria-label="重新抓取首屏">${ICONS.refresh}</button>` : ''}
+        <button type="button" class="card-action-btn" data-action="copy" data-id="${escapeHtml(bm.id)}" aria-label="复制链接">${ICONS.copy}</button>
+        <button type="button" class="card-action-btn" data-action="move" data-id="${escapeHtml(bm.id)}" aria-label="移动到其他文件夹">${ICONS.move}</button>
       </div>
-      <button type="button" class="card-fav-btn${isFav ? ' is-favorited' : ''}" data-action="favorite" data-id="${escapeHtml(bm.id)}" data-key="${escapeHtml(bm.key)}" title="${isFav ? '取消收藏' : '加入顶部收藏'}" aria-label="${isFav ? '取消收藏' : '加入顶部收藏'}" aria-pressed="${isFav ? 'true' : 'false'}">${isFav ? ICONS.starFilled : ICONS.star}</button>
+      <button type="button" class="card-fav-btn${isFav ? ' is-favorited' : ''}" data-action="favorite" data-id="${escapeHtml(bm.id)}" data-key="${escapeHtml(bm.key)}" aria-label="${isFav ? '取消收藏' : '加入顶部收藏'}" aria-pressed="${isFav ? 'true' : 'false'}">${isFav ? ICONS.starFilled : ICONS.star}</button>
     </div>
     <a href="${escapeHtml(bm.url)}" class="card-meta" target="_blank" rel="noopener noreferrer">
       ${faviconSmallHtml}
@@ -637,23 +644,6 @@ function getCurrentScopeBookmarks() {
     return sub ? sub.allBookmarks : folder.allBookmarks;
   }
   return folder.allBookmarks;
-}
-
-function updateTopbarHeader() {
-  const scopeBookmarks = getCurrentScopeBookmarks();
-  const isAll = state.selectedFolderId === 'all';
-
-  if (isAll) {
-    els.viewTitle.textContent = '全部书签';
-    els.viewCount.textContent = `${state.allBookmarks.length}`;
-  } else if (state.selectedFolderId === 'loose') {
-    els.viewTitle.textContent = '未归类书签';
-    els.viewCount.textContent = `${state.looseBookmarks.length}`;
-  } else {
-    const folder = state.folderMap.get(state.selectedFolderId);
-    els.viewTitle.textContent = folder ? folder.title : '书签';
-    els.viewCount.textContent = `${scopeBookmarks.length}`;
-  }
 }
 
 function renderSubfolderBar() {
@@ -698,9 +688,13 @@ function getGroupPreviewLimit() {
   return cols === 1 ? 6 : cols * 2; // Exactly 2 full rows on desktop/tablet
 }
 
+function updateFooterVisibility() {
+  if (!els.galleryFooter) return;
+  els.galleryFooter.hidden = state.allBookmarks.length === 0;
+}
+
 function renderGallery() {
   initThumbObserver();
-  updateTopbarHeader();
   renderSubfolderBar();
 
   const root = els.galleryRoot;
@@ -774,11 +768,25 @@ function renderGallery() {
     }
 
     root.appendChild(frag);
+    updateFooterVisibility();
     return;
   }
 
   // View 2: Single Folder View
   const items = [...getCurrentScopeBookmarks()];
+  const folderName =
+    state.selectedFolderId === 'loose'
+      ? '未归类书签'
+      : state.folderMap.get(state.selectedFolderId)?.title || '书签';
+  updateFooterVisibility();
+
+  const folderHeader = document.createElement('div');
+  folderHeader.className = 'folder-view-header';
+  folderHeader.innerHTML = `
+    <h1 class="folder-view-title">${escapeHtml(folderName)}</h1>
+    <span class="section-count">${items.length}</span>
+  `;
+  root.appendChild(folderHeader);
 
   if (items.length === 0) {
     root.innerHTML = `
@@ -811,15 +819,35 @@ function renderBatchBanner() {
   els.batchBarFill.style.width = `${pct}%`;
 }
 
+function rebuildExcludedKeySet() {
+  const excludedFolderSet = new Set(state.prefs.excludedFolderIds || []);
+  const keys = new Set();
+  for (const bm of state.allBookmarks) {
+    const inExcludedFolder = Array.isArray(bm.ancestorFolderIds)
+      ? bm.ancestorFolderIds.some((id) => excludedFolderSet.has(id))
+      : excludedFolderSet.has(bm.topFolderId) || excludedFolderSet.has(bm.parentId);
+    if (inExcludedFolder || !isCapturableUrl(bm.url) || isPrivateOrInternalUrl(bm.url)) {
+      keys.add(bm.key);
+    }
+  }
+  state.excludedKeys = keys;
+}
+
 function isBookmarkExcludedFromCover(bm) {
   if (!bm || !isCapturableUrl(bm.url) || isPrivateOrInternalUrl(bm.url)) return true;
+  if (state.excludedKeys.has(bm.key)) return true;
   const excludedSet = new Set(state.prefs.excludedFolderIds || []);
+  if (Array.isArray(bm.ancestorFolderIds)) {
+    return bm.ancestorFolderIds.some((id) => excludedSet.has(id));
+  }
   return excludedSet.has(bm.topFolderId) || excludedSet.has(bm.parentId);
 }
 
-// --- First-Time Onboarding Prompt ---
+// --- First-Time Local Welcome Prompt ---
 function getMissingCapturableBookmarks() {
-  return state.allBookmarks.filter((b) => !isBookmarkExcludedFromCover(b) && !state.thumbMeta.has(b.key));
+  return state.allBookmarks.filter(
+    (b) => !isBookmarkExcludedFromCover(b) && Boolean(toSafePublicOrigin(b.url)) && !state.thumbMeta.has(b.key)
+  );
 }
 
 function maybeShowOnboardingPrompt() {
@@ -827,22 +855,15 @@ function maybeShowOnboardingPrompt() {
   if (!forcePreview && (state.prefs.initialCapturePrompted || state.batch.running)) return;
   if (state.allBookmarks.length === 0) return;
 
-  const missing = getMissingCapturableBookmarks();
-  if (missing.length === 0) {
-    state.prefs.initialCapturePrompted = true;
-    savePreferences({ initialCapturePrompted: true });
-    return;
-  }
-
   const folderCount = state.topFolders.length;
   const excludedNames = state.topFolders
     .filter((f) => (state.prefs.excludedFolderIds || []).includes(f.id))
     .map((f) => `「${f.title}」`)
     .join('、');
-  const skipNote = excludedNames ? `（已自动跳过 ${excludedNames} 等内网分组）` : '';
+  const skipNote = excludedNames ? `，已自动跳过 ${excludedNames} 等内网分组` : '';
 
-  els.onboardingDesc.textContent = `已同步 ${folderCount} 个文件夹、共 ${state.allBookmarks.length} 个书签${skipNote}。现在可在后台静默捕捉 ${missing.length} 个公网首屏，全程不弹窗口；之后按月自动更新并在浏览时无感升级为真实首屏。`;
-  els.btnOnboardingStart.textContent = `后台静默捕捉首屏 (${missing.length})`;
+  els.onboardingDesc.textContent = `已本地同步 ${folderCount} 个文件夹、共 ${state.allBookmarks.length} 个书签${skipNote}。默认纯本地运行，绝不外发任何书签地址；日常点开网页时会自动在本地截取真实首屏。`;
+  els.btnOnboardingStart.textContent = '开始使用';
   els.onboardingOverlay.hidden = false;
   els.onboardingOverlay.setAttribute('aria-hidden', 'false');
   els.app.classList.add('is-spotlight-open');
@@ -863,7 +884,7 @@ function closeOnboardingPrompt() {
 
 // --- Spotlight Search ---
 function syncScrollLock() {
-  const locked = Boolean(state.tidy.open || state.spotlight.open || !els.onboardingOverlay.hidden);
+  const locked = Boolean(state.spotlight.open || !els.onboardingOverlay.hidden);
   document.documentElement.classList.toggle('is-scroll-locked', locked);
   document.body.classList.toggle('is-scroll-locked', locked);
 }
@@ -937,9 +958,9 @@ async function renderSpotlightList() {
     })
     .join('');
 
-  // Hydrate mini thumbnails from cache if available
+  // Hydrate mini thumbnails from cache if available (respecting excluded folders)
   for (const bm of state.spotlight.results) {
-    if (!state.thumbMeta.has(bm.key)) continue;
+    if (isBookmarkExcludedFromCover(bm) || !state.thumbMeta.has(bm.key)) continue;
     const objUrl = await resolveObjectUrl(bm.key);
     if (!objUrl) continue;
     const box = list.querySelector(`.spotlight-mini-thumb[data-spot-key="${CSS.escape(bm.key)}"]`);
@@ -949,33 +970,41 @@ async function renderSpotlightList() {
   }
 }
 
-// --- Settings Drawer ---
+// --- Right Split-Pane Settings Panel ---
 async function openTidyDrawer(defaultTab = 'settings') {
+  suppressOverlayScrollbars(340);
   state.tidy.open = true;
   state.tidy.tab = defaultTab;
   state.tidy.stats = await getStorageStats();
-  els.tidyOverlay.hidden = false;
-  els.tidyOverlay.setAttribute('aria-hidden', 'false');
-  syncScrollLock();
-  updateSegmentedControl(els.tidyTabs, `[data-tab="${defaultTab}"]`);
+  els.settingsPane.classList.add('is-open');
+  els.settingsPane.setAttribute('aria-hidden', 'false');
+  els.btnOpenTidy.classList.add('is-active');
+  els.btnOpenTidy.setAttribute('aria-expanded', 'true');
   renderTidyContent();
+  requestAnimationFrame(() => {
+    updateSegmentedControl(els.tidyTabs, `[data-tab="${defaultTab}"]`);
+  });
 }
 
 function closeTidyDrawer() {
+  suppressOverlayScrollbars(340);
   state.tidy.open = false;
-  els.tidyOverlay.hidden = true;
-  els.tidyOverlay.setAttribute('aria-hidden', 'true');
-  syncScrollLock();
+  state.tidy.folderPickerOpen = false;
+  els.settingsPane.classList.remove('is-open');
+  els.settingsPane.setAttribute('aria-hidden', 'true');
+  els.btnOpenTidy.classList.remove('is-active');
+  els.btnOpenTidy.setAttribute('aria-expanded', 'false');
 }
 
 function buildDrawerMiniThumbHtml(bm) {
   const favicon = getFaviconUrl(bm.url, 32);
   const initial = escapeHtml((bm.host || bm.title || '?')[0].toUpperCase());
   const hue = getDomainHue(bm.url);
+  const hideCover = isBookmarkExcludedFromCover(bm);
   const fallback = favicon
     ? `<img class="drawer-mini-fav" src="${escapeHtml(favicon)}" alt="" loading="lazy" />`
     : `<span class="drawer-mini-letter" aria-hidden="true">${initial}</span>`;
-  return `<div class="drawer-mini-thumb" style="--card-hue:${hue}" data-drawer-thumb-key="${escapeHtml(bm.key)}">${fallback}</div>`;
+  return `<div class="drawer-mini-thumb" style="--card-hue:${hue}"${hideCover ? '' : ` data-drawer-thumb-key="${escapeHtml(bm.key)}"`}>${fallback}</div>`;
 }
 
 async function hydrateDrawerMiniThumbs(container) {
@@ -995,118 +1024,201 @@ function renderTidyContent() {
   if (state.tidy.tab === 'health') {
     const publicBookmarks = state.allBookmarks.filter((b) => !isBookmarkExcludedFromCover(b));
     const missingPublic = publicBookmarks.filter((b) => !state.thumbMeta.has(b.key));
-    const dupHtml =
+    const coveredCount = publicBookmarks.length - missingPublic.length;
+
+    const dupRowsHtml =
       state.duplicates.length > 0
         ? state.duplicates
             .map((dup) => {
               const keep = dup.items[0];
               const extras = dup.items.slice(1);
               return `
-                <div class="tidy-row" style="align-items:center;">
+                <div class="settings-item-row">
                   ${buildDrawerMiniThumbHtml(keep)}
-                  <div class="tidy-row-main">
-                    <span class="tidy-row-title">${escapeHtml(dup.title)}</span>
-                    <span class="tidy-row-desc">保留「${escapeHtml(keep.folderPath)}」，另在 ${extras.map((e) => `「${escapeHtml(e.folderPath)}」`).join('、')} 重复出现</span>
+                  <div class="settings-item-main">
+                    <span class="settings-item-title">${escapeHtml(dup.title)}</span>
+                    <span class="settings-item-desc">保留「${escapeHtml(keep.folderPath)}」 · 重复于 ${extras.map((e) => `「${escapeHtml(e.folderPath)}」`).join('、')}</span>
                   </div>
-                  <button type="button" class="text-action is-danger tidy-row-action" data-tidy-dedupe="${escapeHtml(extras.map((e) => e.id).join(','))}">移除重复</button>
+                  <button type="button" class="text-action is-danger tidy-row-action" data-tidy-dedupe="${escapeHtml(extras.map((e) => e.id).join(','))}">删除</button>
                 </div>
               `;
             })
             .join('')
-        : `<div class="tidy-row"><div class="tidy-row-main"><span class="tidy-row-desc">未检测到重复收藏的网址。</span></div></div>`;
+        : `<div class="settings-item-row"><div class="settings-item-main"><span class="settings-item-desc">无重复书签</span></div></div>`;
 
     container.innerHTML = `
-      <section class="tidy-group">
-        <h3 class="tidy-group-title">重复收藏检测 (${state.duplicates.length})</h3>
-        <div class="tidy-list">${dupHtml}</div>
-      </section>
-      <section class="tidy-group">
-        <h3 class="tidy-group-title">公网首屏覆盖进度</h3>
-        <div class="tidy-list">
-          <div class="tidy-row">
-            <div class="tidy-row-main">
-              <span class="tidy-row-title">已缓存 ${publicBookmarks.length - missingPublic.length} / ${publicBookmarks.length} 个公网书签首屏</span>
-              <span class="tidy-row-desc">内网与已排除分组不抓封面。日常访问会自动升级为真实首屏，并按设定周期在后台静默保鲜。</span>
-            </div>
+      <section class="settings-card">
+        <div class="settings-card-head">
+          <h3 class="settings-card-title">封面覆盖</h3>
+        </div>
+        <div class="settings-stat-grid">
+          <div class="settings-stat-box">
+            <span class="settings-stat-label">已有封面</span>
+            <span class="settings-stat-value is-accent">${coveredCount}</span>
+          </div>
+          <div class="settings-stat-box">
+            <span class="settings-stat-label">暂缺封面</span>
+            <span class="settings-stat-value">${missingPublic.length}</span>
           </div>
         </div>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card-head">
+          <h3 class="settings-card-title">重复收藏 (${state.duplicates.length})</h3>
+        </div>
+        <div class="settings-subcard-list">${dupRowsHtml}</div>
       </section>
     `;
     hydrateDrawerMiniThumbs(container);
     return;
   }
 
-  // Tab 3: Cache & Settings
+  // Tab 1: General & Cache Settings (Minimalist UI-first copy)
   const excludedSet = new Set(state.prefs.excludedFolderIds || []);
+  const excludedFolders = state.topFolders.filter((f) => excludedSet.has(f.id));
+  const availableFolders = state.topFolders.filter((f) => !excludedSet.has(f.id));
   const missingPublicCount = getMissingCapturableBookmarks().length;
-  const folderRows = state.topFolders
-    .map(
-      (f) => `
-      <div class="setting-folder-row">
-        <span>${escapeHtml(f.title)}</span>
-        <button type="button" class="setting-switch" role="switch" aria-checked="${excludedSet.has(f.id) ? 'true' : 'false'}" data-toggle-excluded="${escapeHtml(f.id)}" aria-label="跳过 ${escapeHtml(f.title)} 的首屏封面抓取"></button>
-      </div>
-    `
-    )
+
+  const cadenceOptions = [
+    { value: 7, label: '每周', sub: '7 天' },
+    { value: 30, label: '每月', sub: '30 天' },
+    { value: 90, label: '每季度', sub: '90 天' },
+    { value: 0, label: '仅手动', sub: '' }
+  ];
+
+  const radioHtml = cadenceOptions
+    .map((opt) => {
+      const checked = state.prefs.ttlDays === opt.value;
+      return `
+        <label class="radio-option${checked ? ' is-checked' : ''}">
+          <input type="radio" class="radio-input" name="folio-ttl-days" value="${opt.value}" ${checked ? 'checked' : ''} />
+          <span class="radio-dot" aria-hidden="true"></span>
+          <span class="radio-label">${opt.label}</span>
+          ${opt.sub ? `<span class="radio-sub">${opt.sub}</span>` : ''}
+        </label>
+      `;
+    })
     .join('');
 
-  container.innerHTML = `
-    <section class="tidy-group">
-      <h3 class="tidy-group-title">自动首屏更新</h3>
-      <div class="tidy-list">
-        <div class="tidy-row">
-          <div class="tidy-row-main">
-            <span class="tidy-row-title">后台静默补齐与访问升级</span>
-            <span class="tidy-row-desc">公网站点在后台零弹窗静默抓取（mShots 首屏优先，OG 封面兜底），你访问时自动升级为真实首屏。</span>
-          </div>
-          <button type="button" class="setting-switch" role="switch" aria-checked="${state.prefs.autoCapture ? 'true' : 'false'}" id="switch-auto-capture" aria-label="开启或关闭自动首屏更新"></button>
+  const excludedChipsHtml =
+    excludedFolders.length > 0
+      ? excludedFolders
+          .map(
+            (f) => `
+          <span class="excluded-folder-chip">
+            <span class="excluded-folder-icon">${getSidebarFolderIcon(f.title, false)}</span>
+            <span>${escapeHtml(f.title)}</span>
+            <button type="button" class="excluded-folder-remove" data-remove-excluded="${escapeHtml(f.id)}" title="取消屏蔽「${escapeHtml(f.title)}」" aria-label="移出不获取封面列表">${ICONS.close}</button>
+          </span>
+        `
+          )
+          .join('')
+      : `<span class="excluded-empty">暂无</span>`;
+
+  const pickerMenuHtml =
+    state.tidy.folderPickerOpen && availableFolders.length > 0
+      ? `
+        <div class="add-folder-menu" role="listbox" aria-label="选择文件夹">
+          ${availableFolders
+            .map(
+              (f) => `
+            <button type="button" class="add-folder-option" data-add-excluded="${escapeHtml(f.id)}">
+              ${getSidebarFolderIcon(f.title, false)}
+              <span>${escapeHtml(f.title)}</span>
+            </button>
+          `
+            )
+            .join('')}
         </div>
-        <div class="tidy-row">
-          <div class="tidy-row-main">
-            <span class="tidy-row-title">定时后台刷新周期</span>
-            <span class="tidy-row-desc">通过浏览器长周期任务定期巡检并静默刷新过期首屏，零高频打扰。</span>
+      `
+      : '';
+
+  container.innerHTML = `
+    <section class="settings-card">
+      <div class="settings-card-head">
+        <h3 class="settings-card-title">封面更新</h3>
+      </div>
+
+      <div class="settings-subcard-list">
+        <div class="settings-item-row">
+          <div class="settings-item-main">
+            <span class="settings-item-title">浏览时本地截屏</span>
+            <span class="settings-item-desc">打开书签时本地截取，不外发地址</span>
           </div>
-          <select id="select-ttl-days" class="setting-select" aria-label="定时后台刷新周期">
-            <option value="7" ${state.prefs.ttlDays === 7 ? 'selected' : ''}>每周 (7 天)</option>
-            <option value="30" ${state.prefs.ttlDays === 30 ? 'selected' : ''}>每月 (30 天)</option>
-            <option value="90" ${state.prefs.ttlDays === 90 ? 'selected' : ''}>每季度 (90 天)</option>
-            <option value="0" ${state.prefs.ttlDays === 0 ? 'selected' : ''}>仅手动刷新</option>
-          </select>
+          <button type="button" class="setting-switch" role="switch" aria-checked="${state.prefs.autoCapture ? 'true' : 'false'}" id="switch-auto-capture" aria-label="浏览时本地截屏"></button>
+        </div>
+        <div class="settings-item-row">
+          <div class="settings-item-main">
+            <span class="settings-item-title">远程补齐封面</span>
+            <span class="settings-item-desc">仅向 mShots 发送根域名，不含路径参数</span>
+          </div>
+          <button type="button" class="setting-switch" role="switch" aria-checked="${state.prefs.remoteCoverEnabled ? 'true' : 'false'}" id="switch-remote-cover" aria-label="远程补齐封面"></button>
+        </div>
+      </div>
+
+      <div class="settings-subcard">
+        <span class="settings-item-title">刷新周期</span>
+        <div class="radio-group" role="radiogroup" aria-label="刷新周期">
+          ${radioHtml}
         </div>
       </div>
     </section>
 
-    <section class="tidy-group">
-      <h3 class="tidy-group-title">跳过封面的内网 / 内部文件夹</h3>
-      <p class="tidy-row-desc" style="margin:0;">开启后，该文件夹内与所有私有内网 IP / .local 地址均不抓取首屏封面，保持极简图标占位。</p>
-      <div class="setting-folder-list">${folderRows}</div>
+    <section class="settings-card">
+      <div class="settings-card-head">
+        <h3 class="settings-card-title">不获取封面</h3>
+      </div>
+      <p class="settings-card-hint">仅显示图标，内网默认跳过</p>
+
+      <div class="settings-subcard">
+        <div class="excluded-folder-chips">
+          ${excludedChipsHtml}
+          ${availableFolders.length > 0 ? `<button type="button" class="add-folder-btn" id="btn-toggle-folder-picker">${ICONS.plus}<span>添加文件夹</span></button>` : ''}
+        </div>
+        ${pickerMenuHtml}
+      </div>
     </section>
 
-    <section class="tidy-group">
-      <h3 class="tidy-group-title">本地缩略图缓存</h3>
-      <div class="tidy-list">
-        ${missingPublicCount > 0 ? `
-        <div class="tidy-row">
-          <div class="tidy-row-main">
-            <span class="tidy-row-title">还有 ${missingPublicCount} 个公网书签待补齐首屏</span>
-            <span class="tidy-row-desc">全程在后台静默执行，不弹任何窗口，支持断点续传。</span>
+    <section class="settings-card">
+      <div class="settings-card-head">
+        <h3 class="settings-card-title">本地缓存</h3>
+      </div>
+
+      <div class="settings-stat-grid">
+        <div class="settings-stat-box">
+          <span class="settings-stat-label">已缓存</span>
+          <span class="settings-stat-value">${state.tidy.stats.count} 张</span>
+        </div>
+        <div class="settings-stat-box">
+          <span class="settings-stat-label">占用空间</span>
+          <span class="settings-stat-value">${formatBytes(state.tidy.stats.totalBytes)}</span>
+        </div>
+      </div>
+
+      <div class="settings-subcard-list">
+        ${state.prefs.remoteCoverEnabled && missingPublicCount > 0 ? `
+        <div class="settings-item-row">
+          <div class="settings-item-main">
+            <span class="settings-item-title">补齐封面</span>
+            <span class="settings-item-desc">${missingPublicCount} 个待补齐</span>
           </div>
-          <button type="button" class="text-action is-accent tidy-row-action" id="btn-silent-backfill">静默补齐</button>
+          <button type="button" class="text-action is-accent tidy-row-action" id="btn-silent-backfill">补齐</button>
         </div>
         ` : ''}
-        <div class="tidy-row">
-          <div class="tidy-row-main">
-            <span class="tidy-row-title">${state.tidy.stats.count} 张首屏图 · 占用 ${formatBytes(state.tidy.stats.totalBytes)}</span>
-            <span class="tidy-row-desc">已删除书签对应的缓存会自动清理，也可手动立即回收。</span>
+        <div class="settings-item-row">
+          <div class="settings-item-main">
+            <span class="settings-item-title">清理失效缓存</span>
+            <span class="settings-item-desc">删除已移除书签的残留图片</span>
           </div>
-          <button type="button" class="text-action is-accent tidy-row-action" id="btn-prune-cache">清理无效缓存</button>
+          <button type="button" class="text-action is-accent tidy-row-action" id="btn-prune-cache">清理</button>
         </div>
-        <div class="tidy-row">
-          <div class="tidy-row-main">
-            <span class="tidy-row-title">重置全部本地截图</span>
-            <span class="tidy-row-desc">不会影响任何 Chrome 原生书签，仅清空本地图片缓存。</span>
+        <div class="settings-item-row">
+          <div class="settings-item-main">
+            <span class="settings-item-title">清空全部缓存</span>
+            <span class="settings-item-desc">仅删除本地图片，不影响书签</span>
           </div>
-          <button type="button" class="text-action is-danger tidy-row-action" id="btn-clear-cache">清空缓存</button>
+          <button type="button" class="text-action is-danger tidy-row-action" id="btn-clear-cache">清空</button>
         </div>
       </div>
     </section>
@@ -1205,12 +1317,21 @@ function bindEvents() {
   if (els.onboardingMark) els.onboardingMark.innerHTML = ICONS.brand;
   els.btnCollapseSidebar.innerHTML = state.prefs.sidebarCollapsed ? ICONS.sidebarExpand : ICONS.sidebarCollapse;
   els.btnMobileMenu.innerHTML = ICONS.menu;
-  els.btnCloseTidy.innerHTML = ICONS.close;
-  document.getElementById('icon-rail-tidy').innerHTML = ICONS.glassSettings;
+  els.btnCloseTidy.innerHTML = ICONS.sidebarRightCollapse;
+  els.btnCloseTidy.title = '收起设置面板';
+  document.getElementById('icon-topbar-settings').innerHTML = ICONS.settings;
   document.getElementById('icon-topbar-search').innerHTML = ICONS.search;
   document.getElementById('icon-spotlight-search').innerHTML = ICONS.search;
   const ctxTrash = document.getElementById('icon-ctx-trash');
   if (ctxTrash) ctxTrash.innerHTML = ICONS.trash;
+  const footerTopIcon = document.getElementById('icon-footer-top');
+  if (footerTopIcon) footerTopIcon.innerHTML = ICONS.arrowUp;
+
+  if (els.btnBackToTop) {
+    els.btnBackToTop.addEventListener('click', () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
 
   // Scroll separation for sticky borderless topbar
   window.addEventListener(
@@ -1233,6 +1354,7 @@ function bindEvents() {
 
   // Sidebar collapse toggle
   els.btnCollapseSidebar.addEventListener('click', () => {
+    suppressOverlayScrollbars(340);
     state.prefs.sidebarCollapsed = !state.prefs.sidebarCollapsed;
     savePreferences({ sidebarCollapsed: state.prefs.sidebarCollapsed });
     applyLayoutPreferences();
@@ -1452,30 +1574,24 @@ function bindEvents() {
         showToast('复制失败，请手动复制');
       }
     } else if (action === 'recapture') {
-      if (!isCapturableUrl(bm.url) || isPrivateOrInternalUrl(bm.url)) {
-        showToast('内网或系统地址不需要远程抓取封面');
+      if (!state.prefs.remoteCoverEnabled) {
+        showToast('当前为纯本地模式，打开该网页即可本地更新首屏');
+        return;
+      }
+      if (isBookmarkExcludedFromCover(bm) || !toSafePublicOrigin(bm.url)) {
+        showToast('已排除目录或内网地址不进行远程抓取');
         return;
       }
       sendBackgroundMessage({ type: 'START_BATCH_CAPTURE', items: [bm], force: true });
-      showToast(`已在后台静默刷新「${bm.title}」首屏`);
+      showToast(`已按根域名静默刷新「${bm.title}」封面`);
     } else if (action === 'move') {
       openMovePopover(bm.id, actionBtn);
     }
   });
 
-  // First-time onboarding prompt actions
+  // First-time local welcome modal action
   els.btnOnboardingStart.addEventListener('click', () => {
-    const missing = getMissingCapturableBookmarks();
     closeOnboardingPrompt();
-    if (missing.length > 0) {
-      sendBackgroundMessage({ type: 'START_BATCH_CAPTURE', items: missing, force: false });
-      showToast(`开始捕捉 ${missing.length} 项首屏，完成后将转入无感自动更新`);
-    }
-  });
-
-  els.btnOnboardingSkip.addEventListener('click', () => {
-    closeOnboardingPrompt();
-    showToast('已开启日常浏览无感自动捕捉');
   });
 
   els.onboardingOverlay.addEventListener('click', (e) => {
@@ -1538,17 +1654,21 @@ function bindEvents() {
     }
   });
 
-  // Sidebar & Topbar Utility Actions
+  // Topbar Utility Actions
   els.btnTopbarSearch.addEventListener('click', () => openSpotlight(''));
 
   els.btnOpenTidy.addEventListener('click', () => {
     closeMobileSidebar();
-    openTidyDrawer('settings');
+    if (state.tidy.open) closeTidyDrawer();
+    else openTidyDrawer('settings');
   });
 
   systemDarkQuery.addEventListener('change', applyTheme);
 
-  // Spotlight Search Events
+  // Spotlight Search Events (with full CJK IME composition guard)
+  let spotlightComposing = false;
+  let spotlightCompEndTs = 0;
+
   els.spotlightOverlay.addEventListener('click', (e) => {
     if (e.target === els.spotlightOverlay) closeSpotlight();
   });
@@ -1563,10 +1683,26 @@ function bindEvents() {
       closeSpotlight();
     }
   });
+  els.spotlightInput.addEventListener('compositionstart', () => {
+    spotlightComposing = true;
+  });
+  els.spotlightInput.addEventListener('compositionend', () => {
+    spotlightComposing = false;
+    spotlightCompEndTs = performance.now();
+    updateSpotlightResults(els.spotlightInput.value);
+  });
   els.spotlightInput.addEventListener('input', (e) => {
     updateSpotlightResults(e.target.value);
   });
   els.spotlightInput.addEventListener('keydown', (e) => {
+    // Never intercept keys while Chinese/CJK IME is actively composing
+    if (e.isComposing || spotlightComposing || e.keyCode === 229) {
+      return;
+    }
+    if (e.key === 'Enter' && performance.now() - spotlightCompEndTs < 80) {
+      return;
+    }
+
     const count = state.spotlight.results.length;
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -1594,29 +1730,8 @@ function bindEvents() {
     }
   });
 
-  // Settings Drawer Events (prevent backdrop wheel/touch from scrolling underlying page)
+  // Settings Split-Pane Events
   els.btnCloseTidy.addEventListener('click', closeTidyDrawer);
-  els.tidyOverlay.addEventListener('click', (e) => {
-    if (e.target === els.tidyOverlay) closeTidyDrawer();
-  });
-  els.tidyOverlay.addEventListener(
-    'wheel',
-    (e) => {
-      if (!e.target.closest('.tidy-drawer')) {
-        e.preventDefault();
-      }
-    },
-    { passive: false }
-  );
-  els.tidyOverlay.addEventListener(
-    'touchmove',
-    (e) => {
-      if (!e.target.closest('.tidy-drawer')) {
-        e.preventDefault();
-      }
-    },
-    { passive: false }
-  );
   els.tidyTabs.addEventListener('click', async (e) => {
     const tab = e.target.closest('[data-tab]');
     if (!tab) return;
@@ -1641,7 +1756,7 @@ function bindEvents() {
       return;
     }
 
-    // 2. Toggle auto capture
+    // 2. Toggle local passive capture
     if (e.target.closest('#switch-auto-capture')) {
       state.prefs.autoCapture = !state.prefs.autoCapture;
       await savePreferences({ autoCapture: state.prefs.autoCapture });
@@ -1649,27 +1764,78 @@ function bindEvents() {
       return;
     }
 
-    // 7. Toggle excluded internal folder
-    const exclSwitch = e.target.closest('[data-toggle-excluded]');
-    if (exclSwitch) {
-      const fid = exclSwitch.dataset.toggleExcluded;
-      const set = new Set(state.prefs.excludedFolderIds || []);
-      if (set.has(fid)) set.delete(fid);
-      else set.add(fid);
-      state.prefs.excludedFolderIds = Array.from(set);
-      await savePreferences({ excludedFolderIds: state.prefs.excludedFolderIds });
+    // 2b. Toggle opt-in remote cover fetch (Plan A origin-only, default OFF)
+    if (e.target.closest('#switch-remote-cover')) {
+      state.prefs.remoteCoverEnabled = !state.prefs.remoteCoverEnabled;
+      await savePreferences({ remoteCoverEnabled: state.prefs.remoteCoverEnabled });
+      if (!state.prefs.remoteCoverEnabled) {
+        sendBackgroundMessage({ type: 'STOP_BATCH_CAPTURE' });
+        showToast('已关闭远程补齐，仅保留本地截屏');
+      } else {
+        showToast('已开启远程补齐（仅发送公网根域名）');
+      }
+      const prevY = window.scrollY;
       renderTidyContent();
-      showToast('已更新跳过封面的分组配置');
+      renderGallery();
+      if (prevY > 0) requestAnimationFrame(() => window.scrollTo(0, prevY));
       return;
     }
 
-    // 8. Trigger quiet background backfill from Settings
+    // 3. Toggle add-excluded-folder picker
+    if (e.target.closest('#btn-toggle-folder-picker')) {
+      state.tidy.folderPickerOpen = !state.tidy.folderPickerOpen;
+      renderTidyContent();
+      return;
+    }
+
+    // 4. Add folder to "不获取封面" (hides & skips covers immediately)
+    const addExclBtn = e.target.closest('[data-add-excluded]');
+    if (addExclBtn) {
+      const fid = addExclBtn.dataset.addExcluded;
+      const set = new Set(state.prefs.excludedFolderIds || []);
+      set.add(fid);
+      state.prefs.excludedFolderIds = Array.from(set);
+      state.tidy.folderPickerOpen = false;
+      rebuildExcludedKeySet();
+      await savePreferences({ excludedFolderIds: state.prefs.excludedFolderIds });
+      const prevY = window.scrollY;
+      renderTidyContent();
+      renderGallery();
+      if (prevY > 0) requestAnimationFrame(() => window.scrollTo(0, prevY));
+      const folderTitle = state.folderMap.get(fid)?.title || '';
+      showToast(`已将「${folderTitle}」加入不获取封面`);
+      return;
+    }
+
+    // 5. Remove folder from "不获取封面" (restores covers immediately)
+    const rmExclBtn = e.target.closest('[data-remove-excluded]');
+    if (rmExclBtn) {
+      const fid = rmExclBtn.dataset.removeExcluded;
+      const set = new Set(state.prefs.excludedFolderIds || []);
+      set.delete(fid);
+      state.prefs.excludedFolderIds = Array.from(set);
+      rebuildExcludedKeySet();
+      await savePreferences({ excludedFolderIds: state.prefs.excludedFolderIds });
+      const prevY = window.scrollY;
+      renderTidyContent();
+      renderGallery();
+      if (prevY > 0) requestAnimationFrame(() => window.scrollTo(0, prevY));
+      const folderTitle = state.folderMap.get(fid)?.title || '';
+      showToast(`已恢复「${folderTitle}」的封面展示`);
+      return;
+    }
+
+    // 6. Trigger quiet background backfill from Settings (requires opt-in remoteCoverEnabled)
     if (e.target.closest('#btn-silent-backfill')) {
+      if (!state.prefs.remoteCoverEnabled) {
+        showToast('请先开启「远程补齐封面」');
+        return;
+      }
       const missing = getMissingCapturableBookmarks();
       if (missing.length > 0) {
         closeTidyDrawer();
         sendBackgroundMessage({ type: 'START_BATCH_CAPTURE', items: missing, force: false });
-        showToast(`已启动后台静默补齐 (${missing.length} 项)，全程不弹窗`);
+        showToast(`已开始按根域名补齐 (${missing.length} 个站点)`);
       }
       return;
     }
@@ -1701,15 +1867,19 @@ function bindEvents() {
   });
 
   els.tidyContent.addEventListener('change', async (e) => {
-    if (e.target.id === 'select-ttl-days') {
-      state.prefs.ttlDays = Number(e.target.value);
-      await savePreferences({ ttlDays: state.prefs.ttlDays });
-      showToast('已更新自动保鲜周期');
+    if (e.target.name === 'folio-ttl-days') {
+      const days = Number(e.target.value);
+      state.prefs.ttlDays = days;
+      await savePreferences({ ttlDays: days });
+      renderTidyContent();
+      const labels = { 7: '每周', 30: '每月', 90: '每季度', 0: '仅手动' };
+      showToast(`刷新周期已设为「${labels[days] || `${days} 天`}」`);
     }
   });
 
   // Global Keyboard Shortcuts
   document.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     const tag = document.activeElement?.tagName;
     const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
@@ -1794,7 +1964,15 @@ function bindEvents() {
   });
 }
 
-// --- Zero-Space Overlay Scrollbar Indicators (appear only while scrolling) ---
+// --- Zero-Space Overlay Scrollbar Indicators (appear only on genuine user scroll) ---
+let scrollbarSuppressUntil = 0;
+let hideAllScrollbarsFn = () => {};
+
+function suppressOverlayScrollbars(durationMs = 340) {
+  scrollbarSuppressUntil = performance.now() + durationMs;
+  hideAllScrollbarsFn();
+}
+
 function initOverlayScrollbars() {
   const vBar = document.createElement('div');
   vBar.className = 'folio-scrollbar';
@@ -1808,13 +1986,23 @@ function initOverlayScrollbars() {
 
   let vHideTimer = null;
   let hHideTimer = null;
+  let lastWinY = window.scrollY;
+  const scrollPosMap = new WeakMap();
+
+  hideAllScrollbarsFn = () => {
+    clearTimeout(vHideTimer);
+    clearTimeout(hHideTimer);
+    vBar.classList.remove('is-visible');
+    hBar.classList.remove('is-visible');
+  };
 
   function showVerticalThumb(scrollTop, scrollHeight, clientHeight, rect) {
+    if (performance.now() < scrollbarSuppressUntil) return;
     if (scrollHeight <= clientHeight + 2) return;
     const pad = 6;
     const trackLen = Math.max(32, clientHeight - pad * 2);
     const thumbLen = Math.max(30, (clientHeight / scrollHeight) * trackLen);
-    const ratio = scrollTop / (scrollHeight - clientHeight);
+    const ratio = Math.min(1, Math.max(0, scrollTop / (scrollHeight - clientHeight)));
     const top = rect.top + pad + ratio * (trackLen - thumbLen);
     const left = rect.right - 7;
 
@@ -1830,6 +2018,7 @@ function initOverlayScrollbars() {
   }
 
   function showHorizontalThumb(scrollLeft, scrollWidth, clientWidth, rect) {
+    if (performance.now() < scrollbarSuppressUntil) return;
     if (scrollWidth <= clientWidth + 2) return;
     const pad = 6;
     const trackLen = Math.max(32, clientWidth - pad * 2);
@@ -1849,20 +2038,30 @@ function initOverlayScrollbars() {
     hHideTimer = setTimeout(() => hBar.classList.remove('is-visible'), 750);
   }
 
-  // Main window vertical scroll
+  // Suppress synthetic scrollbars during window resize as well
+  window.addEventListener('resize', () => suppressOverlayScrollbars(260), { passive: true });
+
+  // Main window vertical scroll: anchor thumb to workspace's right edge (between content & split Settings pane)
   window.addEventListener(
     'scroll',
     () => {
+      const y = window.scrollY;
+      const moved = Math.abs(y - lastWinY) >= 1;
+      lastWinY = y;
+      if (!moved || performance.now() < scrollbarSuppressUntil) return;
       const doc = document.documentElement;
-      showVerticalThumb(window.scrollY, doc.scrollHeight, window.innerHeight, {
-        top: 0,
-        right: window.innerWidth
+      const wsRect = document.getElementById('workspace')?.getBoundingClientRect();
+      const topOffset = els.topbar ? els.topbar.offsetHeight : 0;
+      const rightEdge = wsRect ? wsRect.right : window.innerWidth;
+      showVerticalThumb(y, doc.scrollHeight - topOffset, window.innerHeight - topOffset, {
+        top: topOffset,
+        right: rightEdge
       });
     },
     { passive: true }
   );
 
-  // Any internal scrollable container (capture phase picks up scroll on nested elements)
+  // Internal scrollable containers (only show axis that genuinely scrolled)
   document.addEventListener(
     'scroll',
     (e) => {
@@ -1870,11 +2069,17 @@ function initOverlayScrollbars() {
       if (!target || target === document || target === document.documentElement || !(target instanceof HTMLElement)) {
         return;
       }
+      const prev = scrollPosMap.get(target) || { top: target.scrollTop, left: target.scrollLeft };
+      const dy = Math.abs(target.scrollTop - prev.top);
+      const dx = Math.abs(target.scrollLeft - prev.left);
+      scrollPosMap.set(target, { top: target.scrollTop, left: target.scrollLeft });
+
+      if (performance.now() < scrollbarSuppressUntil) return;
       const rect = target.getBoundingClientRect();
-      if (target.scrollHeight > target.clientHeight + 2) {
+      if (dy >= 1 && target.scrollHeight > target.clientHeight + 2) {
         showVerticalThumb(target.scrollTop, target.scrollHeight, target.clientHeight, rect);
       }
-      if (target.scrollWidth > target.clientWidth + 2) {
+      if (dx >= 1 && target.scrollWidth > target.clientWidth + 2) {
         showHorizontalThumb(target.scrollLeft, target.scrollWidth, target.clientWidth, rect);
       }
     },
@@ -1882,11 +2087,311 @@ function initOverlayScrollbars() {
   );
 }
 
+// --- Interactive Isometric Background Boxes (Sidebar Footer, OKLCH Harmonized) ---
+function initSidebarBackgroundBoxes() {
+  const grid = document.getElementById('sidebar-boxes-grid');
+  if (!grid || grid.childElementCount > 0) return;
+
+  // Perceptually uniform OKLCH hues matching oklch.fyi & Folio's sidebar icon wheel
+  const hues = [268, 242, 206, 182, 156, 108, 68, 34, 8, 304];
+  const rows = 14;
+  const cols = 16;
+  const plusSvg = `<svg class="bg-box-plus" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M6 2v8M2 6h8"/></svg>`;
+
+  const frag = document.createDocumentFragment();
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'bg-box-cell';
+      if (r % 2 === 0 && c % 2 === 0) {
+        cell.innerHTML = plusSvg;
+      }
+      frag.appendChild(cell);
+    }
+  }
+  grid.appendChild(frag);
+
+  const pickColor = () => {
+    const h = hues[Math.floor(Math.random() * hues.length)];
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    // Harmonious OKLCH fill: crisp pastel glow in light mode, vivid luminous glow in dark mode
+    return isDark ? `oklch(0.72 0.165 ${h} / 0.78)` : `oklch(0.78 0.15 ${h} / 0.72)`;
+  };
+
+  grid.addEventListener('pointerover', (e) => {
+    const cell = e.target.closest('.bg-box-cell');
+    if (!cell) return;
+    cell.classList.add('is-lit');
+    cell.style.backgroundColor = pickColor();
+  });
+
+  grid.addEventListener('pointerout', (e) => {
+    const cell = e.target.closest('.bg-box-cell');
+    if (!cell) return;
+    cell.classList.remove('is-lit');
+    cell.style.backgroundColor = 'transparent';
+  });
+}
+
+// --- Nyx UI–Inspired Zero-Lag Custom Cursor (OS Hardware SVG Pointer + Raw-Event Pill) ---
+let customCursorInitialized = false;
+let customCursorSupportsImageSet = false;
+
+function buildPointerSvgDataUrl(fill, stroke, size) {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none">` +
+    `<path d="M3.5 3.1L9.3 20.5L12.1 14.3L19.4 11.7L3.5 3.1Z" fill="rgba(0,0,0,0.22)"/>` +
+    `<path d="M3 2L8.8 19.6L11.8 13.4L19.2 10.8L3 2Z" fill="${fill}" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round"/>` +
+    `</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+function buildHardwareCursorValue(fill, stroke, fallback) {
+  const u1 = buildPointerSvgDataUrl(fill, stroke, 24);
+  if (customCursorSupportsImageSet) {
+    const u2 = buildPointerSvgDataUrl(fill, stroke, 48);
+    return `image-set(${u1} 1x, ${u2} 2x) 3 2, ${fallback}`;
+  }
+  return `${u1} 3 2, ${fallback}`;
+}
+
+function updateCustomCursorTheme() {
+  if (!customCursorInitialized) return;
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const root = document.documentElement;
+  root.style.setProperty(
+    '--folio-cursor-default',
+    buildHardwareCursorValue(isDark ? '#f6f6f7' : '#171717', isDark ? '#141416' : '#ffffff', 'default')
+  );
+}
+
+function initCustomCursor() {
+  if (customCursorInitialized) return;
+  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+
+  customCursorInitialized = true;
+  const probeUrl = buildPointerSvgDataUrl('#171717', '#ffffff', 24);
+  customCursorSupportsImageSet =
+    typeof CSS !== 'undefined' &&
+    typeof CSS.supports === 'function' &&
+    CSS.supports('cursor', `image-set(${probeUrl} 1x) 3 2, auto`);
+
+  const root = document.documentElement;
+  root.style.setProperty('--folio-cursor-indigo', buildHardwareCursorValue('#5856f2', '#ffffff', 'pointer'));
+  root.style.setProperty('--folio-cursor-blue', buildHardwareCursorValue('#2d7ff9', '#ffffff', 'pointer'));
+  root.style.setProperty('--folio-cursor-teal', buildHardwareCursorValue('#14a38b', '#ffffff', 'pointer'));
+  root.style.setProperty('--folio-cursor-violet', buildHardwareCursorValue('#8b5cf6', '#ffffff', 'pointer'));
+  root.style.setProperty('--folio-cursor-amber', buildHardwareCursorValue('#d98a1c', '#ffffff', 'pointer'));
+  root.style.setProperty('--folio-cursor-rose', buildHardwareCursorValue('#e54865', '#ffffff', 'pointer'));
+  updateCustomCursorTheme();
+  root.classList.add('has-custom-cursor');
+
+  // Create Nyx-style contextual floating pill
+  const pill = document.createElement('div');
+  pill.id = 'folio-cursor-pill';
+  pill.className = 'folio-cursor-pill';
+  pill.setAttribute('aria-hidden', 'true');
+  const pillInner = document.createElement('span');
+  pillInner.className = 'folio-cursor-pill-inner';
+  pill.appendChild(pillInner);
+  document.body.appendChild(pill);
+
+  let isVisible = false;
+  let currentLabel = '';
+  let currentTone = '';
+  let pillW = 48;
+  let pillH = 22;
+  let lastX = -999;
+  let lastY = -999;
+
+  const positionPill = (x, y) => {
+    let tx = x + 16;
+    let ty = y + 18;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    if (tx + pillW > vw - 10) tx = x - pillW - 8;
+    if (ty + pillH > vh - 10) ty = y - pillH - 8;
+    if (tx < 8) tx = 8;
+    if (ty < 8) ty = 8;
+    pill.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+  };
+
+  const hidePill = () => {
+    if (!isVisible) return;
+    isVisible = false;
+    currentLabel = '';
+    pill.classList.remove('is-visible', 'is-pressed');
+  };
+
+  const setPill = (label, tone) => {
+    if (!label) {
+      hidePill();
+      return;
+    }
+    const labelChanged = label !== currentLabel;
+    if (labelChanged) {
+      currentLabel = label;
+      pillInner.textContent = label;
+    }
+    if (tone !== currentTone) {
+      currentTone = tone;
+      pill.dataset.tone = tone;
+    }
+    if (!isVisible) {
+      isVisible = true;
+      pill.classList.add('is-visible');
+    }
+    if (labelChanged) {
+      // Measure once on text change only — never during pointermove
+      pillW = pillInner.offsetWidth || 48;
+      pillH = pillInner.offsetHeight || 22;
+    }
+    if (lastX > -900) {
+      positionPill(lastX, lastY);
+    }
+  };
+
+  const resolveCursorPill = (target) => {
+    if (!target || !(target instanceof Element)) return null;
+    if (target.closest('input, textarea, select')) return null;
+
+    const favBtn = target.closest('.card-fav-btn');
+    if (favBtn) {
+      return {
+        label: favBtn.classList.contains('is-favorited') ? '取消收藏' : '收藏',
+        tone: 'amber'
+      };
+    }
+
+    const actionBtn = target.closest('.card-action-btn');
+    if (actionBtn) {
+      const act = actionBtn.dataset.action;
+      if (act === 'recapture') return { label: '刷新封面', tone: 'blue' };
+      if (act === 'copy') return { label: '复制链接', tone: 'teal' };
+      if (act === 'move') return { label: '移动', tone: 'violet' };
+    }
+
+    if (target.closest('.bookmark-card, .fav-card')) {
+      return { label: '打开', tone: 'indigo' };
+    }
+
+    if (target.closest('.view-all-card')) {
+      return { label: '查看全部', tone: 'indigo' };
+    }
+
+    if (target.closest('#btn-topbar-search')) {
+      return { label: '搜索 ⌘K', tone: 'blue' };
+    }
+
+    if (target.closest('#btn-open-tidy')) {
+      return { label: state.tidy.open ? '收起设置' : '设置', tone: 'teal' };
+    }
+
+    if (target.closest('#btn-close-tidy')) {
+      return { label: '收起', tone: 'teal' };
+    }
+
+    if (target.closest('#btn-collapse-sidebar')) {
+      return { label: state.prefs.sidebarCollapsed ? '展开' : '收起', tone: 'violet' };
+    }
+
+    if (target.closest('#btn-back-to-top')) {
+      return { label: '回到顶部', tone: 'teal' };
+    }
+
+    if (target.closest('.brand-link')) {
+      return { label: '全部书签', tone: 'violet' };
+    }
+
+    const navItem = target.closest('.nav-item');
+    if (navItem && els.sidebar?.classList.contains('is-collapsed')) {
+      const text = navItem.querySelector('.nav-label')?.textContent?.trim();
+      if (text) return { label: text, tone: 'violet' };
+    }
+
+    const dangerEl = target.closest('.btn-danger, .context-item.is-danger');
+    if (dangerEl) {
+      const txt = dangerEl.textContent?.trim();
+      return { label: txt && txt.length <= 6 ? txt : '移除', tone: 'rose' };
+    }
+
+    return null;
+  };
+
+  // Synchronous raw-pointer tracking: zero rAF queueing, zero lerp, zero transition lag
+  const onMove = (e) => {
+    if (e.pointerType && e.pointerType !== 'mouse' && e.pointerType !== 'pen') {
+      hidePill();
+      return;
+    }
+    const x = e.clientX;
+    const y = e.clientY;
+    if (x === lastX && y === lastY) return;
+    lastX = x;
+    lastY = y;
+    if (isVisible) {
+      positionPill(x, y);
+    }
+  };
+
+  if ('onpointerrawupdate' in window) {
+    window.addEventListener('pointerrawupdate', onMove, { passive: true });
+  }
+  window.addEventListener('pointermove', onMove, { passive: true });
+
+  // Boundary-only target detection (never runs per-pixel)
+  document.addEventListener(
+    'pointerover',
+    (e) => {
+      if (e.pointerType && e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      const spec = resolveCursorPill(e.target);
+      if (spec) setPill(spec.label, spec.tone);
+      else hidePill();
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (isVisible && (!e.pointerType || e.pointerType === 'mouse')) {
+        pill.classList.add('is-pressed');
+      }
+    },
+    { passive: true }
+  );
+
+  window.addEventListener(
+    'pointerup',
+    () => {
+      pill.classList.remove('is-pressed');
+      // Refresh dynamic labels right after click (e.g. 收藏 <-> 取消收藏, 设置 <-> 收起设置)
+      if (isVisible && lastX > -900) {
+        requestAnimationFrame(() => {
+          const under = document.elementFromPoint(lastX, lastY);
+          const spec = resolveCursorPill(under);
+          if (spec) setPill(spec.label, spec.tone);
+          else hidePill();
+        });
+      }
+    },
+    { passive: true }
+  );
+
+  document.addEventListener('mouseleave', hidePill, { passive: true });
+  window.addEventListener('blur', hidePill, { passive: true });
+  window.addEventListener('scroll', hidePill, { passive: true });
+}
+
 // --- Bootstrap ---
 async function init() {
   state.prefs = await loadPreferences();
   bindEvents();
   initOverlayScrollbars();
+  initSidebarBackgroundBoxes();
+  initCustomCursor();
   applyTheme();
   applyLayoutPreferences();
 

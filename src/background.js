@@ -1,21 +1,25 @@
-// Manifest V3 Background Service Worker — Silent Self-Updating First-Screen Engine
+// Manifest V3 Background Service Worker — Local-First Privacy Cover Engine
 //
-// 3-Layer Strategy:
-// 1. Silent Background Cover Fetch (Public non-internal bookmarks only, zero popups):
-//    WordPress mShots true first-screen -> automatic fallback to page og:image / twitter:image.
-//    Internal/private hosts and user-excluded folders (auto-detected: 公司/工作/内网...) are skipped.
-// 2. Redirect-Aware Passive True-Screenshot Upgrade:
-//    Tracks bookmark open intents and navigation redirects so visiting a bookmarked site
-//    upgrades its thumbnail to your real rendered viewport screenshot (source: 'capture').
-// 3. Persistent Queue + Weekly/Monthly chrome.alarms Auto-Refresh:
-//    Survives MV3 Service Worker sleep cleanly and refreshes stale public previews on a
-//    gentle weekly (7d) or monthly (30d) cadence — zero minute-level polling.
+// Security & Privacy Architecture:
+// 1. Default Pure-Local Mode (remoteCoverEnabled: false by default):
+//    Zero third-party network requests. Only captures your real rendered viewport locally
+//    via chrome.tabs.captureVisibleTab when you visit a non-excluded bookmarked page.
+// 2. Strictly Opt-In Remote Cover (Plan A Origin-Only Sanitization):
+//    Only runs when the user explicitly enables remoteCoverEnabled in Settings.
+//    Sends ONLY a sanitized public domain origin (e.g. "https://example.com") via
+//    toSafePublicOrigin() — stripping all paths, doc IDs, query params, hashes, credentials,
+//    raw IPs, and custom ports — with credentials: 'omit' and referrerPolicy: 'no-referrer'.
+// 3. Unbypassable Exclusion Enforcement:
+//    Private/internal hosts and excluded folders (auto-detected: 公司/工作/内网...) are
+//    hard-blocked across every local and remote path. Manual refresh (force: true) can NEVER
+//    bypass exclusion rules.
 
 import {
   isCapturableUrl,
   isLikelyInternalFolder,
   isPrivateOrInternalUrl,
-  normalizeUrl
+  normalizeUrl,
+  toSafePublicOrigin
 } from './shared/url.js';
 import { getThumbnail, pruneOrphanThumbnails, saveThumbnail } from './shared/db.js';
 
@@ -57,15 +61,22 @@ async function getSettings() {
     const res = await chrome.storage.local.get([
       'ttlDays',
       'autoCapture',
+      'remoteCoverEnabled',
       'excludedFolderIds'
     ]);
     return {
       ttlDays: typeof res.ttlDays === 'number' ? res.ttlDays : DEFAULT_REFRESH_DAYS,
       autoCapture: res.autoCapture !== false,
+      remoteCoverEnabled: res.remoteCoverEnabled === true,
       excludedFolderIds: Array.isArray(res.excludedFolderIds) ? res.excludedFolderIds : null
     };
   } catch {
-    return { ttlDays: DEFAULT_REFRESH_DAYS, autoCapture: true, excludedFolderIds: null };
+    return {
+      ttlDays: DEFAULT_REFRESH_DAYS,
+      autoCapture: true,
+      remoteCoverEnabled: false,
+      excludedFolderIds: null
+    };
   }
 }
 
@@ -208,13 +219,20 @@ function isRealMshotsResponse(res, blob) {
   return true;
 }
 
-async function fetchMshotsBlob(url) {
-  const endpoint = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=1280&h=800`;
+async function fetchMshotsBlob(rawUrl) {
+  // Plan A: strictly send ONLY sanitized public domain origin (never path, query, hash, or creds)
+  const safeOrigin = toSafePublicOrigin(rawUrl);
+  if (!safeOrigin) return null;
+
+  const endpoint = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(safeOrigin)}?w=1280&h=800`;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(endpoint, {
         redirect: 'follow',
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+        cache: 'no-store',
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
       });
       const blob = await res.blob();
@@ -253,14 +271,22 @@ function extractMetaImageUrl(html, baseUrl) {
   return null;
 }
 
-async function fetchOgImageBlob(url) {
+async function fetchOgImageBlob(rawUrl) {
+  // Plan A: fetch ONLY sanitized public domain origin, strictly cookie-less & referrer-less
+  const safeOrigin = toSafePublicOrigin(rawUrl);
+  if (!safeOrigin) return null;
+
   try {
-    const pageRes = await fetch(url, {
+    const pageRes = await fetch(safeOrigin, {
       redirect: 'follow',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+      cache: 'no-store',
       signal: AbortSignal.timeout(9000),
       headers: { Accept: 'text/html,application/xhtml+xml' }
     });
     if (!pageRes.ok) return null;
+    if (pageRes.url && isPrivateOrInternalUrl(pageRes.url)) return null;
     const ct = (pageRes.headers.get('content-type') || '').toLowerCase();
     if (!ct.includes('text/html') && !ct.includes('xhtml')) return null;
 
@@ -282,14 +308,17 @@ async function fetchOgImageBlob(url) {
       html = (await pageRes.text()).slice(0, 90000);
     }
 
-    const imgUrl = extractMetaImageUrl(html, pageRes.url || url);
+    const imgUrl = extractMetaImageUrl(html, pageRes.url || safeOrigin);
     if (!imgUrl || isPrivateOrInternalUrl(imgUrl)) return null;
 
     const imgRes = await fetch(imgUrl, {
       redirect: 'follow',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
       signal: AbortSignal.timeout(9000)
     });
     if (!imgRes.ok) return null;
+    if (imgRes.url && isPrivateOrInternalUrl(imgRes.url)) return null;
     const imgCt = (imgRes.headers.get('content-type') || '').toLowerCase();
     if (!imgCt.startsWith('image/') || imgCt.includes('svg')) return null;
 
@@ -302,9 +331,16 @@ async function fetchOgImageBlob(url) {
 }
 
 async function fetchSilentCoverForItem(item) {
-  if (!item || !item.url || isPrivateOrInternalUrl(item.url)) return false;
+  if (!item || !item.url) return false;
+  // Hard privacy gate 1: remote cover must be explicitly enabled by user
+  const { remoteCoverEnabled } = await getSettings();
+  if (!remoteCoverEnabled) return false;
+  // Hard privacy gate 2: unbypassable folder & internal URL exclusion check
+  await ensureIndexReady();
+  const meta = bookmarkedMeta.get(item.key);
+  if (!meta || meta.excluded || !toSafePublicOrigin(item.url)) return false;
 
-  // 1) Try true first-screen screenshot via WordPress mShots
+  // 1) Try true first-screen screenshot via WordPress mShots (origin-only)
   const mshotsBlob = await fetchMshotsBlob(item.url);
   if (mshotsBlob) {
     try {
@@ -372,6 +408,12 @@ async function savePersistedQueue(items) {
 }
 
 async function enqueueSilentCapture(items, force = false) {
+  const { remoteCoverEnabled } = await getSettings();
+  if (!remoteCoverEnabled) {
+    await savePersistedQueue([]);
+    return;
+  }
+
   await ensureIndexReady();
   const existingQueue = await loadPersistedQueue();
   const byKey = new Map(existingQueue.map((q) => [q.key, q]));
@@ -380,11 +422,12 @@ async function enqueueSilentCapture(items, force = false) {
     if (!raw || !raw.url) continue;
     const key = raw.key || normalizeUrl(raw.url);
     const meta = bookmarkedMeta.get(key);
-    if (isPrivateOrInternalUrl(raw.url) || (!force && meta?.excluded)) continue;
+    // Unbypassable guard: force NEVER overrides folder/internal exclusion or non-bookmarked URLs
+    if (!meta || meta.excluded || !toSafePublicOrigin(raw.url)) continue;
     byKey.set(key, {
       key,
-      url: raw.url,
-      title: raw.title || meta?.title || raw.url,
+      url: meta.url,
+      title: raw.title || meta.title || meta.url,
       force: Boolean(force)
     });
   }
@@ -412,8 +455,15 @@ async function shouldSilentFetchKey(key, force = false) {
 
 async function processSilentQueue() {
   if (batchState.running) return;
+  const { remoteCoverEnabled } = await getSettings();
+  if (!remoteCoverEnabled) {
+    await savePersistedQueue([]);
+    return;
+  }
   const queue = await loadPersistedQueue();
   if (queue.length === 0) return;
+
+  await ensureIndexReady();
 
   batchState.running = true;
   batchState.cancelled = false;
@@ -439,7 +489,13 @@ async function processSilentQueue() {
 
       let ok = false;
       try {
-        if (await shouldSilentFetchKey(item.key, item.force)) {
+        const liveSettings = await getSettings();
+        const meta = bookmarkedMeta.get(item.key);
+        if (!liveSettings.remoteCoverEnabled) {
+          batchState.cancelled = true;
+          break;
+        }
+        if (meta && !meta.excluded && (await shouldSilentFetchKey(item.key, item.force))) {
           ok = await fetchSilentCoverForItem(item);
         } else {
           ok = true;
@@ -492,8 +548,17 @@ async function shouldPassiveCaptureKey(key) {
 
 async function captureActiveTab(tabId, targetKey) {
   try {
+    const { autoCapture } = await getSettings();
+    if (!autoCapture) return false;
+
+    await ensureIndexReady();
+    const meta = bookmarkedMeta.get(targetKey);
+    if (!meta || meta.excluded) return false;
+
     const tab = await chrome.tabs.get(tabId);
-    if (!tab || !tab.active || !tab.url || !isCapturableUrl(tab.url)) return false;
+    if (!tab || !tab.active || !tab.url || !isCapturableUrl(tab.url) || isPrivateOrInternalUrl(tab.url)) {
+      return false;
+    }
 
     // Verify tab still corresponds to the intended bookmark (either direct URL or tracked redirect)
     const currentKey = normalizeUrl(tab.url);
@@ -611,9 +676,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // --- Layer 3: Weekly / Monthly Long-Interval Periodic Auto-Refresh ---
 
 async function syncPeriodicAlarm() {
-  const { ttlDays, autoCapture } = await getSettings();
+  const { ttlDays, autoCapture, remoteCoverEnabled } = await getSettings();
   await chrome.alarms.clear(ALARM_PERIODIC_REFRESH);
-  if (!autoCapture || ttlDays <= 0) return;
+  // Only schedule periodic remote refresh when user explicitly opted into remoteCoverEnabled
+  if (!autoCapture || !remoteCoverEnabled || ttlDays <= 0) return;
 
   // Long cadence: weekly (7d) or monthly (30d) or quarterly (90d) — zero minute-level polling
   const periodInMinutes = Math.max(7 * 24 * 60, ttlDays * 24 * 60);
@@ -624,8 +690,8 @@ async function syncPeriodicAlarm() {
 }
 
 async function runPeriodicRefreshScan() {
-  const { autoCapture, ttlDays } = await getSettings();
-  if (!autoCapture || ttlDays <= 0) return;
+  const { autoCapture, remoteCoverEnabled, ttlDays } = await getSettings();
+  if (!autoCapture || !remoteCoverEnabled || ttlDays <= 0) return;
 
   await rebuildBookmarkIndex(true);
   const staleItems = [];
@@ -649,13 +715,15 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// Bookmark event listeners: auto-fetch newly created public bookmarks silently
+// Bookmark event listeners: only auto-fetch newly created public bookmarks if user opted into remoteCoverEnabled
 chrome.bookmarks.onCreated.addListener(async (_id, node) => {
   scheduleIndexRebuild(false);
-  if (node && node.url && isCapturableUrl(node.url) && !isPrivateOrInternalUrl(node.url)) {
-    const { autoCapture } = await getSettings();
-    if (!autoCapture) return;
+  if (node && node.url && toSafePublicOrigin(node.url)) {
+    const { autoCapture, remoteCoverEnabled } = await getSettings();
+    if (!autoCapture || !remoteCoverEnabled) return;
     setTimeout(async () => {
+      const latest = await getSettings();
+      if (!latest.autoCapture || !latest.remoteCoverEnabled) return;
       await rebuildBookmarkIndex(false);
       const key = normalizeUrl(node.url);
       const meta = bookmarkedMeta.get(key);
@@ -671,12 +739,29 @@ chrome.bookmarks.onMoved.addListener(() => scheduleIndexRebuild(false));
 chrome.bookmarks.onRemoved.addListener(() => scheduleIndexRebuild(true));
 chrome.bookmarks.onImportEnded.addListener(() => scheduleIndexRebuild(false));
 
-chrome.storage.onChanged.addListener((changes, area) => {
+chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local') return;
   if (changes.excludedFolderIds) {
-    rebuildBookmarkIndex(false);
+    await rebuildBookmarkIndex(false);
+    // Immediately strip any newly excluded bookmarks from any pending remote queue
+    const pending = await loadPersistedQueue();
+    if (pending.length > 0) {
+      const filtered = pending.filter((item) => {
+        const meta = bookmarkedMeta.get(item.key);
+        return meta && !meta.excluded;
+      });
+      if (filtered.length !== pending.length) {
+        await savePersistedQueue(filtered);
+      }
+    }
   }
-  if (changes.ttlDays || changes.autoCapture) {
+  if (changes.remoteCoverEnabled && changes.remoteCoverEnabled.newValue !== true) {
+    batchState.cancelled = true;
+    await savePersistedQueue([]);
+    await chrome.alarms.clear(ALARM_PERIODIC_REFRESH);
+    await chrome.alarms.clear(ALARM_QUEUE_RESUME);
+  }
+  if (changes.ttlDays || changes.autoCapture || changes.remoteCoverEnabled) {
     syncPeriodicAlarm();
   }
 });
@@ -687,7 +772,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || !message.type) return;
 
   if (message.type === 'REGISTER_OPEN_INTENT' && message.key) {
-    recentOpenIntent = { key: message.key, url: message.url || '', ts: Date.now() };
+    const meta = bookmarkedMeta.get(message.key);
+    if (!meta || !meta.excluded) {
+      recentOpenIntent = { key: message.key, url: message.url || '', ts: Date.now() };
+    }
     sendResponse({ ok: true });
     return;
   }
@@ -727,19 +815,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
+async function bootstrapServiceWorker(pruneOrphans = false) {
+  await rebuildBookmarkIndex(pruneOrphans);
+  const { remoteCoverEnabled } = await getSettings();
+  if (!remoteCoverEnabled) {
+    // Purge any leftover remote queue from earlier versions when pure-local mode is active
+    await savePersistedQueue([]);
+    await chrome.alarms.clear(ALARM_PERIODIC_REFRESH);
+    await chrome.alarms.clear(ALARM_QUEUE_RESUME);
+    return;
+  }
+  await syncPeriodicAlarm();
+  processSilentQueue();
+}
+
 // Initialize on install / startup / wake
-chrome.runtime.onInstalled.addListener(async () => {
-  await rebuildBookmarkIndex(false);
-  await syncPeriodicAlarm();
+chrome.runtime.onInstalled.addListener(() => {
+  bootstrapServiceWorker(false);
 });
 
-chrome.runtime.onStartup.addListener(async () => {
-  await rebuildBookmarkIndex(true);
-  await syncPeriodicAlarm();
-  processSilentQueue();
+chrome.runtime.onStartup.addListener(() => {
+  bootstrapServiceWorker(true);
 });
 
-rebuildBookmarkIndex(false).then(() => {
-  syncPeriodicAlarm();
-  processSilentQueue();
-});
+bootstrapServiceWorker(false);

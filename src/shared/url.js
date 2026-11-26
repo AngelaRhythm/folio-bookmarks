@@ -22,6 +22,10 @@ const INTERNAL_TLD_SUFFIXES = [
   '.local', '.localhost', '.internal', '.intranet', '.lan', '.corp', '.home', '.arpa'
 ];
 
+const INTERNAL_HOST_LABELS = new Set([
+  'internal', 'intranet', 'corp', 'lan', 'local', 'localhost'
+]);
+
 export function isLikelyInternalFolder(folderTitle) {
   if (!folderTitle) return false;
   const lower = folderTitle.toLowerCase();
@@ -36,9 +40,13 @@ export function isPrivateOrInternalUrl(rawUrl) {
     const host = parsed.hostname.toLowerCase();
 
     if (!host || host === 'localhost' || host === '::1' || host === '[::1]') return true;
+    // IPv6 literal hostnames (loopback, link-local, ULA, or raw IPv6 addresses)
+    if (host.startsWith('[') || host.includes(':')) return true;
     // Single-label hostnames (e.g., http://oa, http://wiki)
     if (!host.includes('.')) return true;
     if (INTERNAL_TLD_SUFFIXES.some((s) => host.endsWith(s))) return true;
+    // Internal subdomain labels anywhere in hostname (e.g., wiki.internal.company, oa.corp.example.com)
+    if (host.split('.').some((label) => INTERNAL_HOST_LABELS.has(label))) return true;
 
     // IPv4 private / loopback / link-local / CGNAT ranges
     const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -55,6 +63,25 @@ export function isPrivateOrInternalUrl(rawUrl) {
     return false;
   } catch {
     return true;
+  }
+}
+
+// Strict Plan A sanitizer for optional third-party cover fetch:
+// Returns ONLY a standard public domain origin (e.g. "https://example.com"),
+// stripping all paths, doc IDs, query params, hashes, credentials, raw IPs, and custom ports.
+export function toSafePublicOrigin(rawUrl) {
+  if (!isCapturableUrl(rawUrl) || isPrivateOrInternalUrl(rawUrl)) return null;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    const host = parsed.hostname.toLowerCase();
+    // Reject raw IPv4 literals (even public IPs are often VPN gateways or staging servers)
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return null;
+    // Reject non-standard ports
+    if (parsed.port && parsed.port !== '80' && parsed.port !== '443') return null;
+    return `${parsed.protocol}//${host}`;
+  } catch {
+    return null;
   }
 }
 

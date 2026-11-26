@@ -406,6 +406,7 @@ export async function loadPreferences() {
     sidebarCollapsed: false,
     ttlDays: 30,
     autoCapture: true,
+    remoteCoverEnabled: false,
     initialCapturePrompted: false,
     favoriteKeys: [],
     excludedFolderIds: null
