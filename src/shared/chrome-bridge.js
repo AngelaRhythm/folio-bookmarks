@@ -406,7 +406,8 @@ export async function loadPreferences() {
     sidebarCollapsed: false,
     ttlDays: 30,
     autoCapture: true,
-    initialCapturePrompted: false
+    initialCapturePrompted: false,
+    favoriteKeys: []
   };
 
   if (IS_EXTENSION) {

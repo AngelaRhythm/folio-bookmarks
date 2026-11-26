@@ -12,6 +12,7 @@
 - **极简沉浸画廊**：
   - 左侧极窄可收起侧边栏（`228px` 目录树 / `60px` 首字图标轨道），支持多级嵌套文件夹与卡片直接拖拽归类；
   - 紧凑 4 列响应式 `16:10` 首屏卡片网格，纯自动跟随浏览器/系统浅色与深色外观；
+  - 卡片右下角悬浮星标一键收藏，在「全部书签」顶部生成轻量化快速入口条；
   - 72 小时内新收藏的书签自动展示轻量化 `New` 标签，超时自动消失。
 - **Spotlight 全局秒搜**：按 `Cmd + K`、`/` 或在页面直接打字即可实时检索标题、网址与文件夹路径，方向键回车直达。
 - **整理与分组建议（Tidy Studio）**：按需呼出（`Shift + Cmd + O`），提供纯本地规则驱动的文件夹重叠洞察、单条归类建议、同源站点分散聚合、重复收藏检测与缓存管理，一键同步写回 Chrome 原生书签。
@@ -73,3 +74,12 @@ folio-bookmarks/
 - `tabs` & `<all_urls>`：在你访问已收藏网页时调用 `captureVisibleTab` 静默截取首屏。
 - `storage` & `unlimitedStorage`：保存偏好设置并允许 IndexedDB 缓存大量书签首屏图。
 - `favicon`：通过 Chrome 原生 `/_favicon/` 接口离线获取高清站点图标。
+
+## 贡献者
+
+- **[@AngelaRhythm](https://github.com/AngelaRhythm)** · 产品构想、需求定义与视觉审美把关
+- **Antigravity (Google DeepMind)** · 技术架构设计与全栈实现
+
+## 开源协议
+
+本项目基于 [MIT License](LICENSE) 开源。

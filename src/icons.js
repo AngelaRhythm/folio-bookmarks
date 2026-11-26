@@ -64,5 +64,13 @@ export const ICONS = {
   inbox: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">
     <path d="M4 13h4l2 3h4l2-3h4"/>
     <path d="M5.4 5h13.2a1.5 1.5 0 0 1 1.48 1.25L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5l.92-6.75A1.5 1.5 0 0 1 5.4 5Z"/>
+  </svg>`,
+
+  star: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 16.9 6.6 19.8l1-6.1-4.4-4.3 6.1-.9L12 3Z"/>
+  </svg>`,
+
+  starFilled: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 16.9 6.6 19.8l1-6.1-4.4-4.3 6.1-.9L12 3Z"/>
   </svg>`
 };

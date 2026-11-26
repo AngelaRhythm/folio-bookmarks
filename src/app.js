@@ -44,7 +44,8 @@ const state = {
     sidebarCollapsed: false,
     ttlDays: 30,
     autoCapture: true,
-    initialCapturePrompted: false
+    initialCapturePrompted: false,
+    favoriteKeys: []
   },
   rootBarId: '1',
   topFolders: [],          // Top-level bookmark folders
@@ -429,6 +430,108 @@ function renderSidebar() {
   els.tidyCountHint.textContent = suggestionTotal > 0 ? String(suggestionTotal) : '';
 }
 
+function isFavoriteKey(key) {
+  return Array.isArray(state.prefs.favoriteKeys) && state.prefs.favoriteKeys.includes(key);
+}
+
+function getFavoriteBookmarks() {
+  const keys = Array.isArray(state.prefs.favoriteKeys) ? state.prefs.favoriteKeys : [];
+  if (keys.length === 0) return [];
+  const byKey = new Map();
+  for (const bm of state.allBookmarks) {
+    if (!byKey.has(bm.key)) byKey.set(bm.key, bm);
+  }
+  const result = [];
+  for (const key of keys) {
+    const bm = byKey.get(key);
+    if (bm) result.push(bm);
+  }
+  return result;
+}
+
+async function toggleFavoriteKey(key, title = '') {
+  const current = Array.isArray(state.prefs.favoriteKeys) ? [...state.prefs.favoriteKeys] : [];
+  const idx = current.indexOf(key);
+  let added = false;
+  if (idx >= 0) {
+    current.splice(idx, 1);
+  } else {
+    current.push(key);
+    added = true;
+  }
+  state.prefs.favoriteKeys = current;
+  await savePreferences({ favoriteKeys: current });
+
+  // Sync star buttons in place without jarring full gallery re-animation
+  document.querySelectorAll(`.card-fav-btn[data-key="${CSS.escape(key)}"]`).forEach((btn) => {
+    btn.classList.toggle('is-favorited', added);
+    btn.setAttribute('aria-pressed', added ? 'true' : 'false');
+    btn.setAttribute('aria-label', added ? '取消收藏' : '加入顶部收藏');
+    btn.title = added ? '取消收藏' : '加入顶部收藏';
+    btn.innerHTML = added ? ICONS.starFilled : ICONS.star;
+  });
+
+  if (state.selectedFolderId === 'all') {
+    syncFavoritesSection();
+  }
+
+  showToast(added ? `已添加到顶部收藏${title ? ` · ${title}` : ''}` : '已从顶部收藏移除');
+}
+
+function buildFavoritesSectionElement() {
+  const favs = getFavoriteBookmarks();
+  if (favs.length === 0) return null;
+
+  const section = document.createElement('section');
+  section.id = 'favorites-section';
+  section.className = 'favorites-section';
+
+  const itemsHtml = favs
+    .map((bm) => {
+      const faviconUrl = getFaviconUrl(bm.url, 32);
+      const initial = escapeHtml((bm.host || bm.title || '?')[0].toUpperCase());
+      const iconHtml = faviconUrl
+        ? `<img class="fav-tile-icon" src="${escapeHtml(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none'" />`
+        : `<span class="fav-tile-fallback" aria-hidden="true">${initial}</span>`;
+      return `
+        <div class="fav-tile">
+          <a href="${escapeHtml(bm.url)}" class="fav-tile-link" rel="noopener noreferrer" title="${escapeHtml(bm.title)} (${escapeHtml(bm.host)})">
+            ${iconHtml}
+            <span class="fav-tile-title">${escapeHtml(bm.title)}</span>
+          </a>
+          <button type="button" class="fav-tile-unpin" data-unfav-key="${escapeHtml(bm.key)}" title="移出收藏" aria-label="移出收藏">${ICONS.close}</button>
+        </div>
+      `;
+    })
+    .join('');
+
+  section.innerHTML = `
+    <div class="gallery-section-header">
+      <div class="section-heading-group">
+        <h2 class="section-heading">收藏</h2>
+        <span class="section-count">${favs.length}</span>
+      </div>
+    </div>
+    <div class="favorites-strip">${itemsHtml}</div>
+  `;
+
+  return section;
+}
+
+function syncFavoritesSection() {
+  const existing = document.getElementById('favorites-section');
+  const next = buildFavoritesSectionElement();
+  if (!next) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) {
+    existing.replaceWith(next);
+  } else {
+    els.galleryRoot.prepend(next);
+  }
+}
+
 // --- Card Element Builder ---
 function createCardElement(bm, index) {
   const card = document.createElement('article');
@@ -442,6 +545,7 @@ function createCardElement(bm, index) {
   const initialLetter = escapeHtml((bm.host || bm.title || '?')[0].toUpperCase());
   const hasThumbMeta = state.thumbMeta.has(bm.key);
   const isNew = isNewBookmark(bm);
+  const isFav = isFavoriteKey(bm.key);
   const subtitle = bm.host;
 
   const faviconSmallHtml = faviconUrl
@@ -471,6 +575,7 @@ function createCardElement(bm, index) {
         <button type="button" class="card-action-btn" data-action="copy" data-id="${escapeHtml(bm.id)}" title="复制链接" aria-label="复制链接">${ICONS.copy}</button>
         <button type="button" class="card-action-btn" data-action="move" data-id="${escapeHtml(bm.id)}" title="移动到其他文件夹" aria-label="移动到其他文件夹">${ICONS.move}</button>
       </div>
+      <button type="button" class="card-fav-btn${isFav ? ' is-favorited' : ''}" data-action="favorite" data-id="${escapeHtml(bm.id)}" data-key="${escapeHtml(bm.key)}" title="${isFav ? '取消收藏' : '加入顶部收藏'}" aria-label="${isFav ? '取消收藏' : '加入顶部收藏'}" aria-pressed="${isFav ? 'true' : 'false'}">${isFav ? ICONS.starFilled : ICONS.star}</button>
     </div>
     <a href="${escapeHtml(bm.url)}" class="card-meta" rel="noopener noreferrer">
       ${faviconSmallHtml}
@@ -584,6 +689,11 @@ function renderGallery() {
     }
 
     const frag = document.createDocumentFragment();
+    const favSection = buildFavoritesSectionElement();
+    if (favSection) {
+      frag.appendChild(favSection);
+    }
+
     let cardOffset = 0;
 
     for (const group of groups) {
@@ -605,7 +715,7 @@ function renderGallery() {
           </div>
           <div class="section-actions">
             ${hiddenCount > 0 ? `<button type="button" class="text-action is-accent" data-expand-group="${escapeHtml(group.id)}">展开其余 ${hiddenCount} 项</button>` : ''}
-            <button type="button" class="text-action" data-jump-folder="${escapeHtml(group.id)}">进入文件夹</button>
+            <button type="button" class="text-action" data-jump-folder="${escapeHtml(group.id)}">All</button>
           </div>
         </div>
         <div class="card-grid"></div>
@@ -1210,7 +1320,15 @@ function bindEvents() {
       return;
     }
 
-    const actionBtn = e.target.closest('.card-action-btn[data-action]');
+    const unfavBtn = e.target.closest('[data-unfav-key]');
+    if (unfavBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      await toggleFavoriteKey(unfavBtn.dataset.unfavKey);
+      return;
+    }
+
+    const actionBtn = e.target.closest('[data-action]');
     if (!actionBtn) return;
     e.preventDefault();
     e.stopPropagation();
@@ -1219,7 +1337,9 @@ function bindEvents() {
     const bm = state.allBookmarks.find((b) => b.id === actionBtn.dataset.id);
     if (!bm) return;
 
-    if (action === 'copy') {
+    if (action === 'favorite') {
+      await toggleFavoriteKey(bm.key, bm.title);
+    } else if (action === 'copy') {
       try {
         await navigator.clipboard.writeText(bm.url);
         showToast('已复制书签链接');
