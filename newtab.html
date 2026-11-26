@@ -69,10 +69,9 @@
       </nav>
 
       <div class="sidebar-footer">
-        <button type="button" id="btn-open-tidy" class="rail-action" data-tooltip="整理与分组建议 (⇧⌘O)" aria-label="整理与分组建议">
+        <button type="button" id="btn-open-tidy" class="rail-action" data-tooltip="设置 (⇧⌘O)" aria-label="设置">
           <span class="rail-icon" id="icon-rail-tidy"></span>
-          <span class="rail-label">整理建议</span>
-          <span class="rail-hint" id="tidy-count-hint"></span>
+          <span class="rail-label">设置</span>
         </button>
       </div>
     </aside>
@@ -152,20 +151,19 @@
     </div>
   </div>
 
-  <!-- Tidy Studio Slide-Over Drawer -->
+  <!-- Settings & Organizer Slide-Over Drawer -->
   <div id="tidy-overlay" class="drawer-overlay" hidden aria-hidden="true">
-    <aside class="tidy-drawer" role="dialog" aria-modal="true" aria-label="书签整理与分组建议">
+    <aside class="tidy-drawer" role="dialog" aria-modal="true" aria-label="设置">
       <div class="drawer-header">
-        <h2 class="drawer-title">整理与分组建议</h2>
-        <button type="button" id="btn-close-tidy" class="icon-btn" aria-label="关闭整理面板"></button>
+        <h2 class="drawer-title">设置</h2>
+        <button type="button" id="btn-close-tidy" class="icon-btn" aria-label="关闭设置面板"></button>
       </div>
 
       <div class="drawer-tabs-wrap">
         <div id="tidy-tabs" class="segmented-control segmented-full" role="tablist">
           <span class="segmented-thumb" aria-hidden="true"></span>
-          <button type="button" role="tab" class="segmented-option" data-tab="suggestions" aria-selected="true">分组建议</button>
+          <button type="button" role="tab" class="segmented-option" data-tab="settings" aria-selected="true">缓存与设置</button>
           <button type="button" role="tab" class="segmented-option" data-tab="health" aria-selected="false">书签体检</button>
-          <button type="button" role="tab" class="segmented-option" data-tab="settings" aria-selected="false">缓存与设置</button>
         </div>
       </div>
 

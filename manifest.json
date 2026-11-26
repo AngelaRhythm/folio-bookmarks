@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Folio 视觉书签画廊",
   "version": "1.0.0",
-  "description": "极简、沉浸式的 Chrome 书签首屏画廊新标签页，实时联动原生书签，支持无感首屏截屏与智能分组建议。",
+  "description": "极简、沉浸式的 Chrome 书签首屏画廊新标签页，实时联动原生书签，支持静默首屏自动更新与重复书签清理。",
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },

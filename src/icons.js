@@ -38,10 +38,10 @@ export const ICONS = {
     <path d="M6.2 12.2h6.6" stroke="#FFFFFF" stroke-opacity="0.65" stroke-width="1.15" stroke-linecap="round"/>
   </svg>`,
 
-  glassTidy: `<svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path d="M11 3.2c.35-.9 1.65-.9 2 0l1.55 4.05 4.05 1.55c.9.35.9 1.65 0 2l-4.05 1.55-1.55 4.05c-.35.9-1.65.9-2 0l-1.55-4.05-4.05-1.55c-.9-.35-.9-1.65 0-2l4.05-1.55L11 3.2Z" fill="url(#ng-violet)"/>
-    <circle cx="17.5" cy="17.5" r="4" fill="url(#ng-glass-pane)" stroke="url(#ng-glass-stroke)" stroke-width="1"/>
-    <path d="M17.5 15.8v3.4M15.8 17.5h3.4" stroke="#FFFFFF" stroke-opacity="0.72" stroke-width="1.15" stroke-linecap="round"/>
+  glassSettings: `<svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M10.3 3.4a1.8 1.8 0 0 1 3.4 0l.4 1.3c.5.15 1 .36 1.45.62l1.2-.65a1.8 1.8 0 0 1 2.4 2.4l-.65 1.2c.26.45.47.95.62 1.45l1.3.4a1.8 1.8 0 0 1 0 3.4l-1.3.4c-.15.5-.36 1-.62 1.45l.65 1.2a1.8 1.8 0 0 1-2.4 2.4l-1.2-.65c-.45.26-.95.47-1.45.62l-.4 1.3a1.8 1.8 0 0 1-3.4 0l-.4-1.3a7.1 7.1 0 0 1-1.45-.62l-1.2.65a1.8 1.8 0 0 1-2.4-2.4l.65-1.2a7.1 7.1 0 0 1-.62-1.45l-1.3-.4a1.8 1.8 0 0 1 0-3.4l1.3-.4c.15-.5.36-1 .62-1.45l-.65-1.2a1.8 1.8 0 0 1 2.4-2.4l1.2.65c.45-.26.95-.47 1.45-.62l.4-1.3Z" fill="url(#ng-slate)" fill-opacity="0.82"/>
+    <circle cx="12" cy="12" r="5.6" fill="url(#ng-glass-pane)" stroke="url(#ng-glass-stroke)" stroke-width="1"/>
+    <circle cx="12" cy="12" r="2.2" fill="#FFFFFF" fill-opacity="0.8"/>
   </svg>`,
 
   // Semantic Nucleo Glass Folder Icons (for crisp recognition in collapsed rail)

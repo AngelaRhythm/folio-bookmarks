@@ -18,7 +18,6 @@ Folio is a zero-build, Manifest V3 Chrome Extension that overrides the browser N
 - `src/background.js`: MV3 Service Worker implementing the 3-layer silent self-updating engine: (1) zero-popup concurrent background capture for public non-internal bookmarks (WordPress mShots -> `og:image` fallback, persisted queue resilient to MV3 worker sleep), (2) redirect-aware passive `captureVisibleTab` upgrade (`source: 'capture'`) when visiting bookmarks, and (3) long-interval weekly/monthly `chrome.alarms` auto-refresh + orphan thumbnail pruning on `bookmarks.onRemoved`.
 - `src/shared/chrome-bridge.js`: Adapter wrapping `chrome.bookmarks`, `chrome.storage.local`, and `chrome.runtime`. When `IS_EXTENSION` is `false` (previewed via HTTP outside Chrome), it seamlessly provides an in-memory demo bookmark tree and procedural canvas preview thumbnails.
 - `src/shared/db.js`: IndexedDB wrapper (`folio_bookmark_gallery` / `thumbnails` store) with stats and orphan pruning.
-- `src/shared/organizer.js`: Pure local analysis engine for folder overlap insights, domain/keyword move suggestions, scattered same-domain clusters, and duplicate URL detection.
 - `src/shared/url.js`: URL normalization (strips hash and common tracking params, preserves functional query params), capturable protocol guard, root domain helper, favicon URL helper, and deterministic placeholder hue.
 - `src/icons.js`: Inline crisp `1.5px`-stroke SVG icon registry.
 
@@ -29,7 +28,7 @@ Preserve the established minimalist gallery direction in every change:
 1. **Theme**: Follows browser/OS `prefers-color-scheme` automatically (`applyTheme()` in `src/app.js`). Do not re-add manual theme switchers unless explicitly requested.
 2. **Typography**: One versatile Neo-Grotesk system font stack (`--font-sans`) with `font-variant-numeric: tabular-nums` for counts. Maintain the strict 3-size body scale (`--text-heading`, `--text-body`, `--text-sm`) plus `--text-h1` for the view title.
 3. **Minimal Chrome**:
-   - Left sidebar collapses smoothly between `228px` and `60px` rail; footer contains only the on-demand `整理建议` entry.
+   - Left sidebar collapses smoothly between `228px` and `60px` icon-only rail; footer contains only the on-demand `设置` entry (2 tabs: `缓存与设置` & `书签体检`).
    - Main gallery uses a fixed compact `16:10` card grid with zero persistent batch-capture buttons on the page or section headers (initial capture is handled once via the first-time onboarding modal, then passively on visit; individual recapture remains in the card hover action bar).
    - `New` tags appear inline beside card titles only when `0 <= Date.now() - dateAdded <= 72h` (`NEW_TAG_TTL_MS`).
 4. **Motion Hygiene**:
@@ -42,7 +41,7 @@ Preserve the established minimalist gallery direction in every change:
 
 1. **Syntax check all modules**:
    ```bash
-   node --check src/app.js && node --check src/background.js && node --check src/icons.js && node --check src/shared/url.js && node --check src/shared/db.js && node --check src/shared/organizer.js && node --check src/shared/chrome-bridge.js
+   node --check src/app.js && node --check src/background.js && node --check src/icons.js && node --check src/shared/url.js && node --check src/shared/db.js && node --check src/shared/chrome-bridge.js
    ```
 2. **Visual & interactive preview**:
    ```bash

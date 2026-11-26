@@ -16,10 +16,8 @@ import {
   getThumbnail,
   getThumbnailMetaMap
 } from './shared/db.js';
-import { analyzeBookmarks } from './shared/organizer.js';
 import {
   IS_EXTENSION,
-  createBookmarkFolder,
   getBookmarkTree,
   loadPreferences,
   moveBookmark,
@@ -62,10 +60,10 @@ const state = {
   lastGridCols: 0,
   thumbMeta: new Map(),    // normalizedUrl -> { capturedAt, size, status }
   objectUrlCache: new Map(), // normalizedUrl -> blob objectURL
-  analysis: null,
+  duplicates: [],
   batch: { running: false, current: 0, total: 0, captured: 0, failed: 0, currentTitle: '' },
   spotlight: { open: false, query: '', results: [], activeIndex: 0 },
-  tidy: { open: false, tab: 'suggestions', stats: { count: 0, totalBytes: 0 } },
+  tidy: { open: false, tab: 'settings', stats: { count: 0, totalBytes: 0 } },
   dragBookmarkId: null,
   contextBookmarkId: null
 };
@@ -95,7 +93,6 @@ const els = {
   batchBarFill: document.getElementById('batch-bar-fill'),
   subfolderBar: document.getElementById('subfolder-bar'),
   galleryRoot: document.getElementById('gallery-root'),
-  tidyCountHint: document.getElementById('tidy-count-hint'),
   spotlightOverlay: document.getElementById('spotlight-overlay'),
   spotlightInput: document.getElementById('spotlight-input'),
   spotlightResults: document.getElementById('spotlight-results'),
@@ -317,8 +314,21 @@ function parseBookmarkTree(tree) {
     state.activeSubfolderId = 'all';
   }
 
-  // Recompute local organizer insights
-  state.analysis = analyzeBookmarks(topFolders, allBookmarks);
+  // Detect exact/normalized duplicate URLs for Bookmarks Health tab
+  const normMap = new Map();
+  for (const bm of allBookmarks) {
+    if (!bm.key) continue;
+    if (!normMap.has(bm.key)) normMap.set(bm.key, []);
+    normMap.get(bm.key).push(bm);
+  }
+  const dups = [];
+  for (const [key, items] of normMap.entries()) {
+    if (items.length > 1) {
+      const sorted = [...items].sort((a, b) => (a.dateAdded || 0) - (b.dateAdded || 0));
+      dups.push({ key, url: sorted[0].url, title: sorted[0].title, items: sorted });
+    }
+  }
+  state.duplicates = dups;
 }
 
 // --- Theme & Preferences (Follows Browser Color Scheme) ---
@@ -439,13 +449,6 @@ function renderSidebar() {
 
   els.sidebarNav.innerHTML = '';
   els.sidebarNav.appendChild(frag);
-
-  // Update Tidy hint count
-  const suggestionTotal =
-    (state.analysis?.structureInsights.length || 0) +
-    (state.analysis?.moveSuggestions.length || 0) +
-    (state.analysis?.duplicates.length || 0);
-  els.tidyCountHint.textContent = suggestionTotal > 0 ? String(suggestionTotal) : '';
 }
 
 function isFavoriteKey(key) {
@@ -843,6 +846,7 @@ function maybeShowOnboardingPrompt() {
   els.onboardingOverlay.hidden = false;
   els.onboardingOverlay.setAttribute('aria-hidden', 'false');
   els.app.classList.add('is-spotlight-open');
+  syncScrollLock();
 }
 
 function closeOnboardingPrompt() {
@@ -850,6 +854,7 @@ function closeOnboardingPrompt() {
   els.onboardingOverlay.hidden = true;
   els.onboardingOverlay.setAttribute('aria-hidden', 'true');
   els.app.classList.remove('is-spotlight-open');
+  syncScrollLock();
   if (!state.prefs.initialCapturePrompted) {
     state.prefs.initialCapturePrompted = true;
     savePreferences({ initialCapturePrompted: true });
@@ -857,11 +862,18 @@ function closeOnboardingPrompt() {
 }
 
 // --- Spotlight Search ---
+function syncScrollLock() {
+  const locked = Boolean(state.tidy.open || state.spotlight.open || !els.onboardingOverlay.hidden);
+  document.documentElement.classList.toggle('is-scroll-locked', locked);
+  document.body.classList.toggle('is-scroll-locked', locked);
+}
+
 function openSpotlight(initialChar = '') {
   state.spotlight.open = true;
   els.spotlightOverlay.hidden = false;
   els.spotlightOverlay.setAttribute('aria-hidden', 'false');
   els.app.classList.add('is-spotlight-open');
+  syncScrollLock();
   els.spotlightInput.value = initialChar;
   els.spotlightInput.focus();
   updateSpotlightResults(initialChar);
@@ -873,6 +885,7 @@ function closeSpotlight() {
   els.spotlightOverlay.hidden = true;
   els.spotlightOverlay.setAttribute('aria-hidden', 'true');
   els.app.classList.remove('is-spotlight-open');
+  syncScrollLock();
 }
 
 function updateSpotlightResults(query) {
@@ -936,13 +949,14 @@ async function renderSpotlightList() {
   }
 }
 
-// --- Tidy Studio Drawer (Grouping Suggestions, Health, Cache & Privacy) ---
-async function openTidyDrawer(defaultTab = 'suggestions') {
+// --- Settings Drawer ---
+async function openTidyDrawer(defaultTab = 'settings') {
   state.tidy.open = true;
   state.tidy.tab = defaultTab;
   state.tidy.stats = await getStorageStats();
   els.tidyOverlay.hidden = false;
   els.tidyOverlay.setAttribute('aria-hidden', 'false');
+  syncScrollLock();
   updateSegmentedControl(els.tidyTabs, `[data-tab="${defaultTab}"]`);
   renderTidyContent();
 }
@@ -951,119 +965,45 @@ function closeTidyDrawer() {
   state.tidy.open = false;
   els.tidyOverlay.hidden = true;
   els.tidyOverlay.setAttribute('aria-hidden', 'true');
+  syncScrollLock();
+}
+
+function buildDrawerMiniThumbHtml(bm) {
+  const favicon = getFaviconUrl(bm.url, 32);
+  const initial = escapeHtml((bm.host || bm.title || '?')[0].toUpperCase());
+  const hue = getDomainHue(bm.url);
+  const fallback = favicon
+    ? `<img class="drawer-mini-fav" src="${escapeHtml(favicon)}" alt="" loading="lazy" />`
+    : `<span class="drawer-mini-letter" aria-hidden="true">${initial}</span>`;
+  return `<div class="drawer-mini-thumb" style="--card-hue:${hue}" data-drawer-thumb-key="${escapeHtml(bm.key)}">${fallback}</div>`;
+}
+
+async function hydrateDrawerMiniThumbs(container) {
+  const boxes = container.querySelectorAll('.drawer-mini-thumb[data-drawer-thumb-key]');
+  for (const box of boxes) {
+    const key = box.dataset.drawerThumbKey;
+    if (!key || !state.thumbMeta.has(key)) continue;
+    const objUrl = await resolveObjectUrl(key);
+    if (!objUrl || !box.isConnected) continue;
+    box.innerHTML = `<img class="drawer-mini-shot" src="${objUrl}" alt="" decoding="async" />`;
+  }
 }
 
 function renderTidyContent() {
   const container = els.tidyContent;
-  const analysis = state.analysis || { structureInsights: [], moveSuggestions: [], domainClusters: [], duplicates: [] };
-
-  if (state.tidy.tab === 'suggestions') {
-    const sections = [];
-
-    // 1. Folder Architecture Insights
-    if (analysis.structureInsights.length > 0) {
-      sections.push(`
-        <section class="tidy-group">
-          <h3 class="tidy-group-title">文件夹结构优化建议</h3>
-          <div class="tidy-list">
-            ${analysis.structureInsights
-              .map((ins) => {
-                let actionHtml = '';
-                if (ins.actionType === 'nest' && ins.parentFolder && ins.childFolder) {
-                  actionHtml = `<button type="button" class="text-action is-accent tidy-row-action" data-tidy-nest="${escapeHtml(ins.childFolder.id)}" data-target-parent="${escapeHtml(ins.parentFolder.id)}">一键收拢</button>`;
-                } else if (ins.actionType === 'create_inbox') {
-                  actionHtml = `<button type="button" class="text-action is-accent tidy-row-action" data-tidy-create-inbox="1">建收集箱并移入</button>`;
-                }
-                return `
-                  <div class="tidy-row">
-                    <div class="tidy-row-main">
-                      <span class="tidy-row-title">${escapeHtml(ins.title)}</span>
-                      <span class="tidy-row-desc">${escapeHtml(ins.detail)}</span>
-                    </div>
-                    ${actionHtml}
-                  </div>
-                `;
-              })
-              .join('')}
-          </div>
-        </section>
-      `);
-    }
-
-    // 2. Smart Move Suggestions
-    if (analysis.moveSuggestions.length > 0) {
-      sections.push(`
-        <section class="tidy-group">
-          <h3 class="tidy-group-title">单条归类建议 (${analysis.moveSuggestions.length})</h3>
-          <div class="tidy-list">
-            ${analysis.moveSuggestions
-              .map(
-                (item) => `
-              <div class="tidy-row">
-                <div class="tidy-row-main">
-                  <span class="tidy-row-title">${escapeHtml(item.bookmark.title)}</span>
-                  <span class="tidy-row-desc">当前位于「${escapeHtml(item.fromLabel)}」 · ${escapeHtml(item.reason)}</span>
-                </div>
-                <button type="button" class="text-action is-accent tidy-row-action" data-tidy-move="${escapeHtml(item.bookmark.id)}" data-target-parent="${escapeHtml(item.targetFolder.id)}">移至 ${escapeHtml(item.targetFolder.title)}</button>
-              </div>
-            `
-              )
-              .join('')}
-          </div>
-        </section>
-      `);
-    }
-
-    // 3. Same-Domain Scattered Clusters
-    if (analysis.domainClusters.length > 0) {
-      sections.push(`
-        <section class="tidy-group">
-          <h3 class="tidy-group-title">同源站点分散提醒</h3>
-          <div class="tidy-list">
-            ${analysis.domainClusters
-              .map((cluster) => {
-                const folderNames = cluster.folders.map((f) => `${f.title}(${f.items.length})`).join('、');
-                const canUnify = cluster.primaryFolder && cluster.primaryFolder.id !== 'root' && cluster.primaryFolder.id !== 'loose';
-                return `
-                  <div class="tidy-row">
-                    <div class="tidy-row-main">
-                      <span class="tidy-row-title">${escapeHtml(cluster.domain)} · 共 ${cluster.total} 项</span>
-                      <span class="tidy-row-desc">分布在：${escapeHtml(folderNames)}</span>
-                    </div>
-                    ${canUnify ? `<button type="button" class="text-action is-accent tidy-row-action" data-tidy-unify-domain="${escapeHtml(cluster.domain)}" data-target-parent="${escapeHtml(cluster.primaryFolder.id)}">聚合至 ${escapeHtml(cluster.primaryFolder.title)}</button>` : ''}
-                  </div>
-                `;
-              })
-              .join('')}
-          </div>
-        </section>
-      `);
-    }
-
-    if (sections.length === 0) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <h3 class="empty-title">当前分组结构很清晰</h3>
-          <p class="empty-desc">暂未发现明显重叠的分类或散落的书签。你也可以直接在画廊里拖动任意卡片到左侧文件夹完成归类。</p>
-        </div>
-      `;
-    } else {
-      container.innerHTML = sections.join('');
-    }
-    return;
-  }
 
   if (state.tidy.tab === 'health') {
     const publicBookmarks = state.allBookmarks.filter((b) => !isBookmarkExcludedFromCover(b));
     const missingPublic = publicBookmarks.filter((b) => !state.thumbMeta.has(b.key));
     const dupHtml =
-      analysis.duplicates.length > 0
-        ? analysis.duplicates
+      state.duplicates.length > 0
+        ? state.duplicates
             .map((dup) => {
               const keep = dup.items[0];
               const extras = dup.items.slice(1);
               return `
-                <div class="tidy-row">
+                <div class="tidy-row" style="align-items:center;">
+                  ${buildDrawerMiniThumbHtml(keep)}
                   <div class="tidy-row-main">
                     <span class="tidy-row-title">${escapeHtml(dup.title)}</span>
                     <span class="tidy-row-desc">保留「${escapeHtml(keep.folderPath)}」，另在 ${extras.map((e) => `「${escapeHtml(e.folderPath)}」`).join('、')} 重复出现</span>
@@ -1077,7 +1017,7 @@ function renderTidyContent() {
 
     container.innerHTML = `
       <section class="tidy-group">
-        <h3 class="tidy-group-title">重复收藏检测 (${analysis.duplicates.length})</h3>
+        <h3 class="tidy-group-title">重复收藏检测 (${state.duplicates.length})</h3>
         <div class="tidy-list">${dupHtml}</div>
       </section>
       <section class="tidy-group">
@@ -1092,6 +1032,7 @@ function renderTidyContent() {
         </div>
       </section>
     `;
+    hydrateDrawerMiniThumbs(container);
     return;
   }
 
@@ -1265,7 +1206,7 @@ function bindEvents() {
   els.btnCollapseSidebar.innerHTML = state.prefs.sidebarCollapsed ? ICONS.sidebarExpand : ICONS.sidebarCollapse;
   els.btnMobileMenu.innerHTML = ICONS.menu;
   els.btnCloseTidy.innerHTML = ICONS.close;
-  document.getElementById('icon-rail-tidy').innerHTML = ICONS.glassTidy;
+  document.getElementById('icon-rail-tidy').innerHTML = ICONS.glassSettings;
   document.getElementById('icon-topbar-search').innerHTML = ICONS.search;
   document.getElementById('icon-spotlight-search').innerHTML = ICONS.search;
   const ctxTrash = document.getElementById('icon-ctx-trash');
@@ -1602,7 +1543,7 @@ function bindEvents() {
 
   els.btnOpenTidy.addEventListener('click', () => {
     closeMobileSidebar();
-    openTidyDrawer('suggestions');
+    openTidyDrawer('settings');
   });
 
   systemDarkQuery.addEventListener('change', applyTheme);
@@ -1653,11 +1594,29 @@ function bindEvents() {
     }
   });
 
-  // Tidy Drawer Events
+  // Settings Drawer Events (prevent backdrop wheel/touch from scrolling underlying page)
   els.btnCloseTidy.addEventListener('click', closeTidyDrawer);
   els.tidyOverlay.addEventListener('click', (e) => {
     if (e.target === els.tidyOverlay) closeTidyDrawer();
   });
+  els.tidyOverlay.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.target.closest('.tidy-drawer')) {
+        e.preventDefault();
+      }
+    },
+    { passive: false }
+  );
+  els.tidyOverlay.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!e.target.closest('.tidy-drawer')) {
+        e.preventDefault();
+      }
+    },
+    { passive: false }
+  );
   els.tidyTabs.addEventListener('click', async (e) => {
     const tab = e.target.closest('[data-tab]');
     if (!tab) return;
@@ -1670,58 +1629,7 @@ function bindEvents() {
   });
 
   els.tidyContent.addEventListener('click', async (e) => {
-    // 1. Nest overlapping folder
-    const nestBtn = e.target.closest('[data-tidy-nest]');
-    if (nestBtn) {
-      const childId = nestBtn.dataset.tidyNest;
-      const targetParentId = nestBtn.dataset.targetParent;
-      await moveBookmark(childId, { parentId: targetParentId });
-      showToast('已完成文件夹收拢并同步至 Chrome');
-      await refreshAllData();
-      return;
-    }
-
-    // 2. Create Inbox and move loose bookmarks
-    if (e.target.closest('[data-tidy-create-inbox]')) {
-      const inbox = await createBookmarkFolder(state.rootBarId, '收集箱');
-      if (inbox) {
-        for (const bm of [...state.looseBookmarks]) {
-          await moveBookmark(bm.id, { parentId: inbox.id });
-        }
-        showToast('已创建「收集箱」并收纳未归类书签');
-        await refreshAllData();
-      }
-      return;
-    }
-
-    // 3. Move single suggested bookmark
-    const moveBtn = e.target.closest('[data-tidy-move]');
-    if (moveBtn) {
-      await moveBookmark(moveBtn.dataset.tidyMove, { parentId: moveBtn.dataset.targetParent });
-      showToast('已按建议归类并同步至 Chrome');
-      await refreshAllData();
-      return;
-    }
-
-    // 4. Unify same-domain cluster
-    const unifyBtn = e.target.closest('[data-tidy-unify-domain]');
-    if (unifyBtn) {
-      const domain = unifyBtn.dataset.tidyUnifyDomain;
-      const targetParentId = unifyBtn.dataset.targetParent;
-      const cluster = state.analysis?.domainClusters.find((c) => c.domain === domain);
-      if (cluster) {
-        for (const bm of cluster.items) {
-          if (bm.topFolderId !== targetParentId && bm.parentId !== targetParentId) {
-            await moveBookmark(bm.id, { parentId: targetParentId });
-          }
-        }
-        showToast(`已聚合 ${domain} 书签`);
-        await refreshAllData();
-      }
-      return;
-    }
-
-    // 5. Remove duplicate bookmarks
+    // 1. Remove duplicate bookmarks
     const dedupeBtn = e.target.closest('[data-tidy-dedupe]');
     if (dedupeBtn) {
       const ids = dedupeBtn.dataset.tidyDedupe.split(',').filter(Boolean);
@@ -1733,7 +1641,7 @@ function bindEvents() {
       return;
     }
 
-    // 6. Toggle auto capture
+    // 2. Toggle auto capture
     if (e.target.closest('#switch-auto-capture')) {
       state.prefs.autoCapture = !state.prefs.autoCapture;
       await savePreferences({ autoCapture: state.prefs.autoCapture });
@@ -1815,7 +1723,7 @@ function bindEvents() {
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'o') {
       e.preventDefault();
       if (state.tidy.open) closeTidyDrawer();
-      else openTidyDrawer('suggestions');
+      else openTidyDrawer('settings');
       return;
     }
 
