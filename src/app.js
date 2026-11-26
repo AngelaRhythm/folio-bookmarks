@@ -56,6 +56,7 @@ const state = {
   activeSubfolderId: 'all',
   expandedSidebarFolders: new Set(),
   expandedGroupsInAll: new Set(),
+  lastGridCols: 0,
   thumbMeta: new Map(),    // normalizedUrl -> { capturedAt, size, status }
   objectUrlCache: new Map(), // normalizedUrl -> blob objectURL
   analysis: null,
@@ -495,7 +496,7 @@ function buildFavoritesSectionElement() {
         : `<span class="fav-tile-fallback" aria-hidden="true">${initial}</span>`;
       return `
         <div class="fav-tile">
-          <a href="${escapeHtml(bm.url)}" class="fav-tile-link" rel="noopener noreferrer" title="${escapeHtml(bm.title)} (${escapeHtml(bm.host)})">
+          <a href="${escapeHtml(bm.url)}" class="fav-tile-link" target="_blank" rel="noopener noreferrer" title="${escapeHtml(bm.title)} (${escapeHtml(bm.host)})">
             ${iconHtml}
             <span class="fav-tile-title">${escapeHtml(bm.title)}</span>
           </a>
@@ -558,7 +559,7 @@ function createCardElement(bm, index) {
 
   card.innerHTML = `
     <div class="card-stage">
-      <a href="${escapeHtml(bm.url)}" class="card-link" rel="noopener noreferrer" aria-label="${escapeHtml(bm.title)}">
+      <a href="${escapeHtml(bm.url)}" class="card-link" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(bm.title)}">
         <div class="card-placeholder">
           <div class="placeholder-chrome" aria-hidden="true">
             <span class="placeholder-dot"></span>
@@ -577,7 +578,7 @@ function createCardElement(bm, index) {
       </div>
       <button type="button" class="card-fav-btn${isFav ? ' is-favorited' : ''}" data-action="favorite" data-id="${escapeHtml(bm.id)}" data-key="${escapeHtml(bm.key)}" title="${isFav ? '取消收藏' : '加入顶部收藏'}" aria-label="${isFav ? '取消收藏' : '加入顶部收藏'}" aria-pressed="${isFav ? 'true' : 'false'}">${isFav ? ICONS.starFilled : ICONS.star}</button>
     </div>
-    <a href="${escapeHtml(bm.url)}" class="card-meta" rel="noopener noreferrer">
+    <a href="${escapeHtml(bm.url)}" class="card-meta" target="_blank" rel="noopener noreferrer">
       ${faviconSmallHtml}
       <div class="card-text">
         <div class="card-title-row">
@@ -658,6 +659,22 @@ function renderSubfolderBar() {
     .join('');
 }
 
+function getGridColumnCount() {
+  if (window.innerWidth <= 720) return 1;
+  const style = getComputedStyle(els.galleryRoot);
+  const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  const innerWidth = Math.max(220, els.galleryRoot.clientWidth - padX);
+  const minCard = 220;
+  const colGap = 14;
+  return Math.max(1, Math.floor((innerWidth + colGap) / (minCard + colGap)));
+}
+
+function getGroupPreviewLimit() {
+  const cols = getGridColumnCount();
+  state.lastGridCols = cols;
+  return cols === 1 ? 6 : cols * 2; // Exactly 2 full rows on desktop/tablet
+}
+
 function renderGallery() {
   initThumbObserver();
   updateTopbarHeader();
@@ -695,13 +712,14 @@ function renderGallery() {
     }
 
     let cardOffset = 0;
+    const previewLimit = getGroupPreviewLimit();
 
     for (const group of groups) {
       const section = document.createElement('section');
       section.className = 'gallery-section';
 
       const isExpanded = state.expandedGroupsInAll.has(group.id);
-      const limit = isExpanded ? group.items.length : 8;
+      const limit = isExpanded ? group.items.length : previewLimit;
       const visibleItems = group.items.slice(0, limit);
       const hiddenCount = group.items.length - visibleItems.length;
 
@@ -857,7 +875,7 @@ async function renderSpotlightList() {
       const favicon = getFaviconUrl(bm.url, 32);
       const selected = idx === state.spotlight.activeIndex ? ' is-selected' : '';
       return `
-        <a href="${escapeHtml(bm.url)}" class="spotlight-item${selected}" data-spotlight-idx="${idx}" role="option" aria-selected="${idx === state.spotlight.activeIndex}">
+        <a href="${escapeHtml(bm.url)}" class="spotlight-item${selected}" target="_blank" rel="noopener noreferrer" data-spotlight-idx="${idx}" role="option" aria-selected="${idx === state.spotlight.activeIndex}">
           <div class="spotlight-mini-thumb" data-spot-key="${escapeHtml(bm.key)}">
             ${favicon ? `<img src="${escapeHtml(favicon)}" alt="" style="width:16px;height:16px;object-fit:contain;" />` : `<span>${escapeHtml(bm.host[0]?.toUpperCase() || '·')}</span>`}
           </div>
@@ -1415,6 +1433,11 @@ function bindEvents() {
   els.spotlightOverlay.addEventListener('click', (e) => {
     if (e.target === els.spotlightOverlay) closeSpotlight();
   });
+  els.spotlightResults.addEventListener('click', (e) => {
+    if (e.target.closest('.spotlight-item')) {
+      closeSpotlight();
+    }
+  });
   els.spotlightInput.addEventListener('input', (e) => {
     updateSpotlightResults(e.target.value);
   });
@@ -1437,11 +1460,8 @@ function bindEvents() {
       e.preventDefault();
       const chosen = state.spotlight.results[state.spotlight.activeIndex];
       if (chosen) {
-        if (e.metaKey || e.ctrlKey) {
-          window.open(chosen.url, '_blank', 'noopener');
-        } else {
-          window.location.href = chosen.url;
-        }
+        window.open(chosen.url, '_blank', 'noopener,noreferrer');
+        closeSpotlight();
       }
     }
   });
@@ -1616,12 +1636,27 @@ function bindEvents() {
     }
   });
 
-  // Resize keeps segmented control thumbs aligned
+  // Resize keeps segmented control thumbs aligned & adapts 2-row group preview count
   window.addEventListener('resize', () => {
     if (state.tidy.open) {
       updateSegmentedControl(els.tidyTabs, `[data-tab="${state.tidy.tab}"]`);
     }
   });
+
+  if (typeof ResizeObserver !== 'undefined') {
+    let gridResizeTimer = null;
+    const ro = new ResizeObserver(() => {
+      if (state.selectedFolderId !== 'all') return;
+      clearTimeout(gridResizeTimer);
+      gridResizeTimer = setTimeout(() => {
+        const nextCols = getGridColumnCount();
+        if (nextCols !== state.lastGridCols) {
+          renderGallery();
+        }
+      }, 120);
+    });
+    ro.observe(els.galleryRoot);
+  }
 
   // Sweep expired 72h New tags when returning to an open tab
   document.addEventListener('visibilitychange', () => {
