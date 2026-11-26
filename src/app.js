@@ -66,7 +66,8 @@ const state = {
   batch: { running: false, current: 0, total: 0, captured: 0, failed: 0, currentTitle: '' },
   spotlight: { open: false, query: '', results: [], activeIndex: 0 },
   tidy: { open: false, tab: 'suggestions', stats: { count: 0, totalBytes: 0 } },
-  dragBookmarkId: null
+  dragBookmarkId: null,
+  contextBookmarkId: null
 };
 
 // --- DOM References ---
@@ -103,6 +104,8 @@ const els = {
   tidyTabs: document.getElementById('tidy-tabs'),
   tidyContent: document.getElementById('tidy-content'),
   movePopover: document.getElementById('move-popover'),
+  cardContextMenu: document.getElementById('card-context-menu'),
+  ctxRemoveBookmark: document.getElementById('ctx-remove-bookmark'),
   railTooltip: document.getElementById('rail-tooltip'),
   toast: document.getElementById('toast')
 };
@@ -132,13 +135,17 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getFolderMonogram(title) {
-  const clean = (title || '').trim();
-  if (!clean) return '·';
-  // Take first CJK character or up to 2 Latin letters
-  const first = clean[0];
-  if (/[\u4e00-\u9fa5]/.test(first)) return first;
-  return clean.slice(0, 2).toUpperCase();
+function getSidebarFolderIcon(title, isActive) {
+  const t = (title || '').toLowerCase();
+  if (t.includes('公司') || t.includes('工作') || t.includes('work') || t.includes('company')) return ICONS.glassWork;
+  if (t.includes('论坛') || t.includes('博客') || t.includes('阅读') || t.includes('blog') || t.includes('forum')) return ICONS.glassForum;
+  if (t.includes('视觉') || t.includes('灵感') || t.includes('设计') || t.includes('design') || t.includes('ui')) return ICONS.glassVisual;
+  if (t.includes('个站') || t.includes('作品') || t.includes('site') || t.includes('web')) return ICONS.glassGlobe;
+  if (t.includes('工具') || t.includes('效率') || t.includes('tool')) return ICONS.glassTools;
+  if (t.includes('code') || t.includes('开发') || t.includes('前端') || t.includes('dev')) return ICONS.glassCode;
+  if (t.includes('规范') || t.includes('文档') || t.includes('spec') || t.includes('doc')) return ICONS.glassSpec;
+  if (t.includes('ai') || t.includes('大模型') || t.includes('智能')) return ICONS.glassAi;
+  return isActive ? ICONS.glassFolderActive : ICONS.glassFolder;
 }
 
 // --- Lazy Thumbnail Loader (IntersectionObserver + IndexedDB) ---
@@ -322,7 +329,9 @@ function applyTheme() {
 }
 
 function applyLayoutPreferences() {
-  els.sidebar.classList.toggle('is-collapsed', Boolean(state.prefs.sidebarCollapsed));
+  const collapsed = Boolean(state.prefs.sidebarCollapsed);
+  els.sidebar.classList.toggle('is-collapsed', collapsed);
+  els.btnCollapseSidebar.innerHTML = collapsed ? ICONS.sidebarExpand : ICONS.sidebarCollapse;
 }
 
 function updateSegmentedControl(container, activeSelector) {
@@ -357,7 +366,7 @@ function renderSidebar() {
   allBtn.dataset.folderId = 'all';
   allBtn.dataset.tooltip = `全部书签 (${state.allBookmarks.length})`;
   allBtn.innerHTML = `
-    <span class="nav-item-icon">${ICONS.allGrid}</span>
+    <span class="nav-item-icon">${ICONS.glassAllGrid}</span>
     <span class="nav-label">全部书签</span>
     <span class="nav-count">${state.allBookmarks.length}</span>
   `;
@@ -372,7 +381,7 @@ function renderSidebar() {
     looseBtn.dataset.dropFolderId = state.rootBarId;
     looseBtn.dataset.tooltip = `未归类 (${state.looseBookmarks.length})`;
     looseBtn.innerHTML = `
-      <span class="nav-item-icon">${ICONS.inbox}</span>
+      <span class="nav-item-icon">${ICONS.glassInbox}</span>
       <span class="nav-label">未归类</span>
       <span class="nav-count">${state.looseBookmarks.length}</span>
     `;
@@ -398,9 +407,6 @@ function renderSidebar() {
     btn.dataset.folderId = folder.id;
     btn.dataset.dropFolderId = folder.id;
     btn.dataset.tooltip = `${folder.title} (${folder.totalCount})`;
-    if (folder.depth === 0) {
-      btn.dataset.monogram = getFolderMonogram(folder.title);
-    }
 
     const chevronHtml = hasChildren
       ? `<span class="nav-chevron${isExpanded ? ' is-open' : ''}" data-toggle-expand="${folder.id}" role="button" aria-label="展开子文件夹">${ICONS.chevron}</span>`
@@ -408,8 +414,7 @@ function renderSidebar() {
 
     btn.innerHTML = `
       ${chevronHtml}
-      <span class="nav-item-icon">${ICONS.folder}</span>
-      <span class="nav-monogram" aria-hidden="true">${escapeHtml(getFolderMonogram(folder.title))}</span>
+      <span class="nav-item-icon">${getSidebarFolderIcon(folder.title, isActive)}</span>
       <span class="nav-label">${escapeHtml(folder.title)}</span>
       <span class="nav-count">${folder.totalCount}</span>
     `;
@@ -499,25 +504,6 @@ function buildFavoritesSectionElement() {
   section.id = 'favorites-section';
   section.className = 'favorites-section';
 
-  const itemsHtml = favs
-    .map((bm) => {
-      const faviconUrl = getFaviconUrl(bm.url, 32);
-      const initial = escapeHtml((bm.host || bm.title || '?')[0].toUpperCase());
-      const iconHtml = faviconUrl
-        ? `<img class="fav-tile-icon" src="${escapeHtml(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none'" />`
-        : `<span class="fav-tile-fallback" aria-hidden="true">${initial}</span>`;
-      return `
-        <div class="fav-tile">
-          <a href="${escapeHtml(bm.url)}" class="fav-tile-link" target="_blank" rel="noopener noreferrer" title="${escapeHtml(bm.title)} (${escapeHtml(bm.host)})">
-            ${iconHtml}
-            <span class="fav-tile-title">${escapeHtml(bm.title)}</span>
-          </a>
-          <button type="button" class="fav-tile-unpin" data-unfav-key="${escapeHtml(bm.key)}" title="移出收藏" aria-label="移出收藏">${ICONS.close}</button>
-        </div>
-      `;
-    })
-    .join('');
-
   section.innerHTML = `
     <div class="gallery-section-header">
       <div class="section-heading-group">
@@ -525,10 +511,32 @@ function buildFavoritesSectionElement() {
         <span class="section-count">${favs.length}</span>
       </div>
     </div>
-    <div class="favorites-strip">${itemsHtml}</div>
+    <div class="favorites-rail"></div>
   `;
 
+  const rail = section.querySelector('.favorites-rail');
+  favs.forEach((bm, idx) => {
+    rail.appendChild(createCardElement(bm, idx));
+  });
+
   return section;
+}
+
+function createViewAllCard(group, index) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'view-all-card';
+  btn.style.setProperty('--stagger-i', String(Math.min(index, 12)));
+  btn.dataset.jumpFolder = group.id;
+  btn.setAttribute('aria-label', `查看「${group.title}」全部 ${group.items.length} 个书签`);
+  btn.innerHTML = `
+    <div class="view-all-stage">
+      <span class="view-all-icon">${ICONS.arrowRight}</span>
+      <span class="view-all-label">查看全部</span>
+      <span class="view-all-count">共 ${group.items.length} 项</span>
+    </div>
+  `;
+  return btn;
 }
 
 function syncFavoritesSection() {
@@ -725,6 +733,7 @@ function renderGallery() {
 
     let cardOffset = 0;
     const previewLimit = getGroupPreviewLimit();
+    const maxBookmarksCollapsed = Math.max(1, previewLimit - 1);
 
     for (const group of groups) {
       const section = document.createElement('section');
@@ -732,23 +741,20 @@ function renderGallery() {
       section.dataset.groupId = group.id;
 
       const isExpanded = state.expandedGroupsInAll.has(group.id);
-      const limit = isExpanded ? group.items.length : previewLimit;
+      const limit = isExpanded ? group.items.length : maxBookmarksCollapsed;
       const visibleItems = group.items.slice(0, limit);
-      const hiddenCount = group.items.length - visibleItems.length;
-      const canCollapse = isExpanded && group.items.length > previewLimit;
+      const hiddenCount = Math.max(0, group.items.length - visibleItems.length);
+      const canCollapse = isExpanded && group.items.length > maxBookmarksCollapsed;
 
       section.innerHTML = `
         <div class="gallery-section-header">
           <div class="section-heading-group">
-            <h2 class="section-heading">
-              <button type="button" class="section-heading-btn" data-jump-folder="${escapeHtml(group.id)}">${escapeHtml(group.title)}</button>
-            </h2>
+            <h2 class="section-heading">${escapeHtml(group.title)}</h2>
             <span class="section-count">${group.items.length}</span>
           </div>
           <div class="section-actions">
-            ${hiddenCount > 0 ? `<button type="button" class="text-action is-accent" data-expand-group="${escapeHtml(group.id)}">展开其余 ${hiddenCount} 项</button>` : ''}
+            ${hiddenCount > 0 ? `<button type="button" class="text-action is-accent" data-expand-group="${escapeHtml(group.id)}">展开</button>` : ''}
             ${canCollapse ? `<button type="button" class="text-action" data-collapse-group="${escapeHtml(group.id)}">收起</button>` : ''}
-            <button type="button" class="text-action" data-jump-folder="${escapeHtml(group.id)}">All</button>
           </div>
         </div>
         <div class="card-grid"></div>
@@ -757,6 +763,9 @@ function renderGallery() {
       const grid = section.querySelector('.card-grid');
       for (const bm of visibleItems) {
         grid.appendChild(createCardElement(bm, cardOffset++));
+      }
+      if (!isExpanded) {
+        grid.appendChild(createViewAllCard(group, cardOffset++));
       }
       frag.appendChild(section);
     }
@@ -1204,15 +1213,37 @@ function closeMovePopover() {
   els.movePopover.hidden = true;
 }
 
+// --- Card Right-Click Context Menu ---
+function openCardContextMenu(bookmarkId, clientX, clientY) {
+  state.contextBookmarkId = bookmarkId;
+  closeMovePopover();
+  els.cardContextMenu.hidden = false;
+  const menuW = els.cardContextMenu.offsetWidth || 156;
+  const menuH = els.cardContextMenu.offsetHeight || 48;
+  const left = Math.min(window.innerWidth - menuW - 10, Math.max(10, clientX));
+  const top = Math.min(window.innerHeight - menuH - 10, Math.max(10, clientY));
+  els.cardContextMenu.style.left = `${left}px`;
+  els.cardContextMenu.style.top = `${top}px`;
+}
+
+function closeCardContextMenu() {
+  state.contextBookmarkId = null;
+  if (els.cardContextMenu) els.cardContextMenu.hidden = true;
+}
+
 // --- Data Refresh Cycle ---
 let reloadTimer = null;
 
 async function refreshAllData() {
+  const prevScrollY = window.scrollY;
   const [tree, thumbMeta] = await Promise.all([getBookmarkTree(), getThumbnailMetaMap()]);
   state.thumbMeta = thumbMeta;
   parseBookmarkTree(tree);
   renderSidebar();
   renderGallery();
+  if (prevScrollY > 0) {
+    requestAnimationFrame(() => window.scrollTo(0, prevScrollY));
+  }
   if (state.tidy.open) {
     state.tidy.stats = await getStorageStats();
     renderTidyContent();
@@ -1231,18 +1262,21 @@ function bindEvents() {
   // Static icons hydration
   document.querySelector('.brand-mark').innerHTML = ICONS.brand;
   if (els.onboardingMark) els.onboardingMark.innerHTML = ICONS.brand;
-  els.btnCollapseSidebar.innerHTML = ICONS.panelLeft;
+  els.btnCollapseSidebar.innerHTML = state.prefs.sidebarCollapsed ? ICONS.sidebarExpand : ICONS.sidebarCollapse;
   els.btnMobileMenu.innerHTML = ICONS.menu;
   els.btnCloseTidy.innerHTML = ICONS.close;
-  document.getElementById('icon-rail-tidy').innerHTML = ICONS.tidy;
+  document.getElementById('icon-rail-tidy').innerHTML = ICONS.glassTidy;
   document.getElementById('icon-topbar-search').innerHTML = ICONS.search;
   document.getElementById('icon-spotlight-search').innerHTML = ICONS.search;
+  const ctxTrash = document.getElementById('icon-ctx-trash');
+  if (ctxTrash) ctxTrash.innerHTML = ICONS.trash;
 
   // Scroll separation for sticky borderless topbar
   window.addEventListener(
     'scroll',
     () => {
       els.topbar.classList.toggle('is-scrolled', window.scrollY > 6);
+      closeCardContextMenu();
     },
     { passive: true }
   );
@@ -1395,7 +1429,9 @@ function bindEvents() {
       const section = expandBtn.closest('.gallery-section');
       const grid = section?.querySelector('.card-grid');
       if (grid) {
-        const renderedCount = grid.children.length;
+        const viewAllEl = grid.querySelector('.view-all-card');
+        if (viewAllEl) viewAllEl.remove();
+        const renderedCount = grid.querySelectorAll('.bookmark-card').length;
         const rest = items.slice(renderedCount);
         const frag = document.createDocumentFragment();
         rest.forEach((bm, idx) => {
@@ -1416,20 +1452,26 @@ function bindEvents() {
     if (collapseBtn) {
       const gid = collapseBtn.dataset.collapseGroup;
       state.expandedGroupsInAll.delete(gid);
-      const items = gid === 'loose' ? state.looseBookmarks : state.folderMap.get(gid)?.allBookmarks || [];
+      const folder = gid === 'loose' ? null : state.folderMap.get(gid);
+      const items = gid === 'loose' ? state.looseBookmarks : folder?.allBookmarks || [];
+      const title = gid === 'loose' ? '未归类书签' : folder?.title || '';
       const section = collapseBtn.closest('.gallery-section');
       const grid = section?.querySelector('.card-grid');
-      const previewLimit = getGroupPreviewLimit();
+      const maxBookmarksCollapsed = Math.max(1, getGroupPreviewLimit() - 1);
       if (grid) {
-        while (grid.children.length > previewLimit) {
-          grid.lastElementChild.remove();
+        const cards = Array.from(grid.querySelectorAll('.bookmark-card'));
+        for (let i = maxBookmarksCollapsed; i < cards.length; i++) {
+          cards[i].remove();
         }
-        const hiddenCount = Math.max(0, items.length - previewLimit);
+        if (!grid.querySelector('.view-all-card')) {
+          grid.appendChild(createViewAllCard({ id: gid, title, items }, 0));
+        }
+        const hiddenCount = Math.max(0, items.length - maxBookmarksCollapsed);
         delete collapseBtn.dataset.collapseGroup;
         if (hiddenCount > 0) {
           collapseBtn.dataset.expandGroup = gid;
           collapseBtn.classList.add('is-accent');
-          collapseBtn.textContent = `展开其余 ${hiddenCount} 项`;
+          collapseBtn.textContent = '展开';
         } else {
           collapseBtn.remove();
         }
@@ -1439,21 +1481,11 @@ function bindEvents() {
       return;
     }
 
-    const unfavBtn = e.target.closest('[data-unfav-key]');
-    if (unfavBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-      await toggleFavoriteKey(unfavBtn.dataset.unfavKey);
-      return;
-    }
-
-    // Register redirect-aware open intent when clicking any bookmark card or favorite tile
-    const navLink = e.target.closest('a.card-link, a.card-meta, a.fav-tile-link');
-    if (navLink && !e.target.closest('[data-action], [data-unfav-key]')) {
+    // Register redirect-aware open intent when clicking any bookmark card link
+    const navLink = e.target.closest('a.card-link, a.card-meta');
+    if (navLink && !e.target.closest('[data-action]')) {
       const cardEl = navLink.closest('.bookmark-card[data-bookmark-id]');
-      const bm = cardEl
-        ? state.allBookmarks.find((b) => b.id === cardEl.dataset.bookmarkId)
-        : state.allBookmarks.find((b) => b.url === navLink.getAttribute('href'));
+      const bm = cardEl ? state.allBookmarks.find((b) => b.id === cardEl.dataset.bookmarkId) : null;
       if (bm && !isBookmarkExcludedFromCover(bm)) {
         sendBackgroundMessage({ type: 'REGISTER_OPEN_INTENT', key: bm.key, url: bm.url });
       }
@@ -1527,9 +1559,41 @@ function bindEvents() {
     if (!IS_EXTENSION) await refreshAllData();
   });
 
+  // Right-click context menu on any bookmark card
+  els.galleryRoot.addEventListener('contextmenu', (e) => {
+    const card = e.target.closest('.bookmark-card[data-bookmark-id]');
+    if (!card) {
+      closeCardContextMenu();
+      return;
+    }
+    e.preventDefault();
+    openCardContextMenu(card.dataset.bookmarkId, e.clientX, e.clientY);
+  });
+
+  els.ctxRemoveBookmark.addEventListener('click', async () => {
+    const bmId = state.contextBookmarkId;
+    closeCardContextMenu();
+    if (!bmId) return;
+    const bm = state.allBookmarks.find((b) => b.id === bmId);
+    if (!bm) return;
+    await removeBookmark(bm.id);
+    // Clean up favorite key if no duplicate bookmark shares this key
+    const remainingSameKey = state.allBookmarks.filter((b) => b.id !== bm.id && b.key === bm.key);
+    if (remainingSameKey.length === 0 && isFavoriteKey(bm.key)) {
+      const nextFavs = (state.prefs.favoriteKeys || []).filter((k) => k !== bm.key);
+      state.prefs.favoriteKeys = nextFavs;
+      await savePreferences({ favoriteKeys: nextFavs });
+    }
+    showToast(`已移除书签「${bm.title}」`);
+    if (!IS_EXTENSION) await refreshAllData();
+  });
+
   document.addEventListener('click', (e) => {
     if (!els.movePopover.hidden && !els.movePopover.contains(e.target) && !e.target.closest('[data-action="move"]')) {
       closeMovePopover();
+    }
+    if (!els.cardContextMenu.hidden && !els.cardContextMenu.contains(e.target)) {
+      closeCardContextMenu();
     }
   });
 
@@ -1759,7 +1823,10 @@ function bindEvents() {
       if (!els.onboardingOverlay.hidden) closeOnboardingPrompt();
       else if (state.spotlight.open) closeSpotlight();
       else if (state.tidy.open) closeTidyDrawer();
-      else closeMovePopover();
+      else {
+        closeMovePopover();
+        closeCardContextMenu();
+      }
       return;
     }
 

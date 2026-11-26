@@ -7,6 +7,48 @@
   <link rel="stylesheet" href="styles/folio.css" />
 </head>
 <body>
+  <!-- Shared SVG definitions for Nucleo Glass sidebar icons -->
+  <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden;" aria-hidden="true">
+    <defs>
+      <linearGradient id="ng-cobalt" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#60A5FA" />
+        <stop offset="100%" stop-color="#1D4ED8" />
+      </linearGradient>
+      <linearGradient id="ng-slate" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#94A3B8" />
+        <stop offset="100%" stop-color="#475569" />
+      </linearGradient>
+      <linearGradient id="ng-amber" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#FBBF24" />
+        <stop offset="100%" stop-color="#D97706" />
+      </linearGradient>
+      <linearGradient id="ng-violet" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#A78BFA" />
+        <stop offset="100%" stop-color="#6D28D9" />
+      </linearGradient>
+      <linearGradient id="ng-emerald" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#34D399" />
+        <stop offset="100%" stop-color="#059669" />
+      </linearGradient>
+      <linearGradient id="ng-rose" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#FB7185" />
+        <stop offset="100%" stop-color="#E11D48" />
+      </linearGradient>
+      <linearGradient id="ng-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#38BDF8" />
+        <stop offset="100%" stop-color="#0284C7" />
+      </linearGradient>
+      <linearGradient id="ng-glass-pane" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--glass-hi)" stop-opacity="0.76" />
+        <stop offset="100%" stop-color="var(--glass-lo)" stop-opacity="0.34" />
+      </linearGradient>
+      <linearGradient id="ng-glass-stroke" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.72" />
+        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.14" />
+      </linearGradient>
+    </defs>
+  </svg>
+
   <div id="app" class="app-shell">
     <!-- Mobile backdrop for drawer sidebar -->
     <div id="sidebar-backdrop" class="sidebar-backdrop" aria-hidden="true"></div>
@@ -133,6 +175,14 @@
 
   <!-- Floating Move-to-Folder Popover -->
   <div id="move-popover" class="move-popover" hidden role="menu" aria-label="移动到文件夹"></div>
+
+  <!-- Card Right-Click Context Menu -->
+  <div id="card-context-menu" class="context-menu" hidden role="menu" aria-label="书签操作">
+    <button type="button" id="ctx-remove-bookmark" class="context-menu-item is-danger" role="menuitem">
+      <span class="context-menu-icon" id="icon-ctx-trash"></span>
+      <span>移除书签</span>
+    </button>
+  </div>
 
   <!-- Subtle Floating Tooltip for Collapsed Rail -->
   <div id="rail-tooltip" class="rail-tooltip" hidden aria-hidden="true"></div>
