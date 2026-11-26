@@ -44,8 +44,13 @@ export async function getThumbnailMetaMap() {
     req.onsuccess = (event) => {
       const cursor = event.target.result;
       if (cursor) {
-        const { key, capturedAt, size, status } = cursor.value;
-        map.set(key, { capturedAt, size: size || 0, status: status || 'ok' });
+        const { key, capturedAt, size, status, source } = cursor.value;
+        map.set(key, {
+          capturedAt,
+          size: size || 0,
+          status: status || 'ok',
+          source: source || 'capture'
+        });
         cursor.continue();
       } else {
         resolve(map);
@@ -63,6 +68,7 @@ export async function saveThumbnail(key, blob, extra = {}) {
     size: blob ? blob.size : 0,
     capturedAt: Date.now(),
     status: extra.status || 'ok',
+    source: extra.source || 'capture', // 'capture' | 'mshots' | 'og'
     width: extra.width || 640,
     height: extra.height || 400
   };

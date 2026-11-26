@@ -16,6 +16,48 @@ const BLOCKED_HOSTS = [
   'microsoftedge.microsoft.com'
 ];
 
+const INTERNAL_FOLDER_HINTS = ['公司', '工作', '内网', '内部', 'work', 'company', 'office', 'intranet', 'internal'];
+
+const INTERNAL_TLD_SUFFIXES = [
+  '.local', '.localhost', '.internal', '.intranet', '.lan', '.corp', '.home', '.arpa'
+];
+
+export function isLikelyInternalFolder(folderTitle) {
+  if (!folderTitle) return false;
+  const lower = folderTitle.toLowerCase();
+  return INTERNAL_FOLDER_HINTS.some((hint) => lower.includes(hint));
+}
+
+export function isPrivateOrInternalUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return true;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+    const host = parsed.hostname.toLowerCase();
+
+    if (!host || host === 'localhost' || host === '::1' || host === '[::1]') return true;
+    // Single-label hostnames (e.g., http://oa, http://wiki)
+    if (!host.includes('.')) return true;
+    if (INTERNAL_TLD_SUFFIXES.some((s) => host.endsWith(s))) return true;
+
+    // IPv4 private / loopback / link-local / CGNAT ranges
+    const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4) {
+      const a = Number(ipv4[1]);
+      const b = Number(ipv4[2]);
+      if (a === 10 || a === 127 || a === 0) return true;
+      if (a === 192 && b === 168) return true;
+      if (a === 169 && b === 254) return true;
+      if (a === 172 && b >= 16 && b <= 31) return true;
+      if (a === 100 && b >= 64 && b <= 127) return true;
+    }
+
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 export function isCapturableUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== 'string') return false;
   try {

@@ -21,7 +21,8 @@
     "tabs",
     "storage",
     "unlimitedStorage",
-    "favicon"
+    "favicon",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"

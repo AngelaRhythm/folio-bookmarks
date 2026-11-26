@@ -1708,6 +1708,21 @@ a {
   color: var(--text-primary);
 }
 
+.setting-folder-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.setting-folder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-hairline);
+  font-size: var(--text-body);
+}
+
 /* Move-to-Folder Popover */
 .move-popover {
   position: fixed;

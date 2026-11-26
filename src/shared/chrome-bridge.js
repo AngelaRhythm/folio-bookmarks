@@ -407,7 +407,8 @@ export async function loadPreferences() {
     ttlDays: 30,
     autoCapture: true,
     initialCapturePrompted: false,
-    favoriteKeys: []
+    favoriteKeys: [],
+    excludedFolderIds: null
   };
 
   if (IS_EXTENSION) {

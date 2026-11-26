@@ -6,6 +6,8 @@ import {
   getDomainHue,
   getFaviconUrl,
   isCapturableUrl,
+  isLikelyInternalFolder,
+  isPrivateOrInternalUrl,
   normalizeUrl
 } from './shared/url.js';
 import {
@@ -45,7 +47,8 @@ const state = {
     ttlDays: 30,
     autoCapture: true,
     initialCapturePrompted: false,
-    favoriteKeys: []
+    favoriteKeys: [],
+    excludedFolderIds: null
   },
   rootBarId: '1',
   topFolders: [],          // Top-level bookmark folders
@@ -287,6 +290,15 @@ function parseBookmarkTree(tree) {
   state.folderMap = folderMap;
   state.allBookmarks = allBookmarks;
   state.looseBookmarks = looseBookmarks;
+
+  // Auto-detect internal/company folders that skip cover capture on first launch
+  if (!Array.isArray(state.prefs.excludedFolderIds)) {
+    const detected = topFolders
+      .filter((f) => isLikelyInternalFolder(f.title))
+      .map((f) => f.id);
+    state.prefs.excludedFolderIds = detected;
+    savePreferences({ excludedFolderIds: detected });
+  }
 
   // Validate currently selected folder still exists
   if (
@@ -717,11 +729,13 @@ function renderGallery() {
     for (const group of groups) {
       const section = document.createElement('section');
       section.className = 'gallery-section';
+      section.dataset.groupId = group.id;
 
       const isExpanded = state.expandedGroupsInAll.has(group.id);
       const limit = isExpanded ? group.items.length : previewLimit;
       const visibleItems = group.items.slice(0, limit);
       const hiddenCount = group.items.length - visibleItems.length;
+      const canCollapse = isExpanded && group.items.length > previewLimit;
 
       section.innerHTML = `
         <div class="gallery-section-header">
@@ -733,6 +747,7 @@ function renderGallery() {
           </div>
           <div class="section-actions">
             ${hiddenCount > 0 ? `<button type="button" class="text-action is-accent" data-expand-group="${escapeHtml(group.id)}">展开其余 ${hiddenCount} 项</button>` : ''}
+            ${canCollapse ? `<button type="button" class="text-action" data-collapse-group="${escapeHtml(group.id)}">收起</button>` : ''}
             <button type="button" class="text-action" data-jump-folder="${escapeHtml(group.id)}">All</button>
           </div>
         </div>
@@ -784,9 +799,15 @@ function renderBatchBanner() {
   els.batchBarFill.style.width = `${pct}%`;
 }
 
+function isBookmarkExcludedFromCover(bm) {
+  if (!bm || !isCapturableUrl(bm.url) || isPrivateOrInternalUrl(bm.url)) return true;
+  const excludedSet = new Set(state.prefs.excludedFolderIds || []);
+  return excludedSet.has(bm.topFolderId) || excludedSet.has(bm.parentId);
+}
+
 // --- First-Time Onboarding Prompt ---
 function getMissingCapturableBookmarks() {
-  return state.allBookmarks.filter((b) => isCapturableUrl(b.url) && !state.thumbMeta.has(b.key));
+  return state.allBookmarks.filter((b) => !isBookmarkExcludedFromCover(b) && !state.thumbMeta.has(b.key));
 }
 
 function maybeShowOnboardingPrompt() {
@@ -802,8 +823,14 @@ function maybeShowOnboardingPrompt() {
   }
 
   const folderCount = state.topFolders.length;
-  els.onboardingDesc.textContent = `已同步 ${folderCount} 个文件夹、共 ${state.allBookmarks.length} 个书签，其中 ${missing.length} 个尚未生成首屏预览。现在可一次性全部捕捉，之后日常浏览会自动无感补齐与保鲜。`;
-  els.btnOnboardingStart.textContent = `全部捕捉一次首屏 (${missing.length})`;
+  const excludedNames = state.topFolders
+    .filter((f) => (state.prefs.excludedFolderIds || []).includes(f.id))
+    .map((f) => `「${f.title}」`)
+    .join('、');
+  const skipNote = excludedNames ? `（已自动跳过 ${excludedNames} 等内网分组）` : '';
+
+  els.onboardingDesc.textContent = `已同步 ${folderCount} 个文件夹、共 ${state.allBookmarks.length} 个书签${skipNote}。现在可在后台静默捕捉 ${missing.length} 个公网首屏，全程不弹窗口；之后按月自动更新并在浏览时无感升级为真实首屏。`;
+  els.btnOnboardingStart.textContent = `后台静默捕捉首屏 (${missing.length})`;
   els.onboardingOverlay.hidden = false;
   els.onboardingOverlay.setAttribute('aria-hidden', 'false');
   els.app.classList.add('is-spotlight-open');
@@ -1018,7 +1045,8 @@ function renderTidyContent() {
   }
 
   if (state.tidy.tab === 'health') {
-    const missingAll = state.allBookmarks.filter((b) => isCapturableUrl(b.url) && !state.thumbMeta.has(b.key));
+    const publicBookmarks = state.allBookmarks.filter((b) => !isBookmarkExcludedFromCover(b));
+    const missingPublic = publicBookmarks.filter((b) => !state.thumbMeta.has(b.key));
     const dupHtml =
       analysis.duplicates.length > 0
         ? analysis.duplicates
@@ -1044,12 +1072,12 @@ function renderTidyContent() {
         <div class="tidy-list">${dupHtml}</div>
       </section>
       <section class="tidy-group">
-        <h3 class="tidy-group-title">首屏覆盖进度</h3>
+        <h3 class="tidy-group-title">公网首屏覆盖进度</h3>
         <div class="tidy-list">
           <div class="tidy-row">
             <div class="tidy-row-main">
-              <span class="tidy-row-title">已缓存 ${state.allBookmarks.length - missingAll.length} / ${state.allBookmarks.length} 个书签首屏</span>
-              <span class="tidy-row-desc">日常浏览收藏过的网页会自动无感补齐与更新首屏，也可在任意卡片悬浮后点击刷新图标单独重抓。</span>
+              <span class="tidy-row-title">已缓存 ${publicBookmarks.length - missingPublic.length} / ${publicBookmarks.length} 个公网书签首屏</span>
+              <span class="tidy-row-desc">内网与已排除分组不抓封面。日常访问会自动升级为真实首屏，并按设定周期在后台静默保鲜。</span>
             </div>
           </div>
         </div>
@@ -1059,26 +1087,39 @@ function renderTidyContent() {
   }
 
   // Tab 3: Cache & Settings
+  const excludedSet = new Set(state.prefs.excludedFolderIds || []);
+  const missingPublicCount = getMissingCapturableBookmarks().length;
+  const folderRows = state.topFolders
+    .map(
+      (f) => `
+      <div class="setting-folder-row">
+        <span>${escapeHtml(f.title)}</span>
+        <button type="button" class="setting-switch" role="switch" aria-checked="${excludedSet.has(f.id) ? 'true' : 'false'}" data-toggle-excluded="${escapeHtml(f.id)}" aria-label="跳过 ${escapeHtml(f.title)} 的首屏封面抓取"></button>
+      </div>
+    `
+    )
+    .join('');
+
   container.innerHTML = `
     <section class="tidy-group">
-      <h3 class="tidy-group-title">无感首屏捕获</h3>
+      <h3 class="tidy-group-title">自动首屏更新</h3>
       <div class="tidy-list">
         <div class="tidy-row">
           <div class="tidy-row-main">
-            <span class="tidy-row-title">访问收藏网页时自动更新首屏</span>
-            <span class="tidy-row-desc">仅在本地压缩为 WebP 存入 IndexedDB，绝不上传任何书签地址。</span>
+            <span class="tidy-row-title">后台静默补齐与访问升级</span>
+            <span class="tidy-row-desc">公网站点在后台零弹窗静默抓取（mShots 首屏优先，OG 封面兜底），你访问时自动升级为真实首屏。</span>
           </div>
-          <button type="button" class="setting-switch" role="switch" aria-checked="${state.prefs.autoCapture ? 'true' : 'false'}" id="switch-auto-capture" aria-label="开启或关闭访问自动截屏"></button>
+          <button type="button" class="setting-switch" role="switch" aria-checked="${state.prefs.autoCapture ? 'true' : 'false'}" id="switch-auto-capture" aria-label="开启或关闭自动首屏更新"></button>
         </div>
         <div class="tidy-row">
           <div class="tidy-row-main">
-            <span class="tidy-row-title">首屏自动保鲜周期</span>
-            <span class="tidy-row-desc">超过周期后，再次访问该书签时自动静默刷新首屏图。</span>
+            <span class="tidy-row-title">定时后台刷新周期</span>
+            <span class="tidy-row-desc">通过浏览器长周期任务定期巡检并静默刷新过期首屏，零高频打扰。</span>
           </div>
-          <select id="select-ttl-days" class="setting-select" aria-label="首屏自动保鲜周期">
-            <option value="14" ${state.prefs.ttlDays === 14 ? 'selected' : ''}>14 天</option>
-            <option value="30" ${state.prefs.ttlDays === 30 ? 'selected' : ''}>30 天</option>
-            <option value="90" ${state.prefs.ttlDays === 90 ? 'selected' : ''}>90 天</option>
+          <select id="select-ttl-days" class="setting-select" aria-label="定时后台刷新周期">
+            <option value="7" ${state.prefs.ttlDays === 7 ? 'selected' : ''}>每周 (7 天)</option>
+            <option value="30" ${state.prefs.ttlDays === 30 ? 'selected' : ''}>每月 (30 天)</option>
+            <option value="90" ${state.prefs.ttlDays === 90 ? 'selected' : ''}>每季度 (90 天)</option>
             <option value="0" ${state.prefs.ttlDays === 0 ? 'selected' : ''}>仅手动刷新</option>
           </select>
         </div>
@@ -1086,8 +1127,23 @@ function renderTidyContent() {
     </section>
 
     <section class="tidy-group">
+      <h3 class="tidy-group-title">跳过封面的内网 / 内部文件夹</h3>
+      <p class="tidy-row-desc" style="margin:0;">开启后，该文件夹内与所有私有内网 IP / .local 地址均不抓取首屏封面，保持极简图标占位。</p>
+      <div class="setting-folder-list">${folderRows}</div>
+    </section>
+
+    <section class="tidy-group">
       <h3 class="tidy-group-title">本地缩略图缓存</h3>
       <div class="tidy-list">
+        ${missingPublicCount > 0 ? `
+        <div class="tidy-row">
+          <div class="tidy-row-main">
+            <span class="tidy-row-title">还有 ${missingPublicCount} 个公网书签待补齐首屏</span>
+            <span class="tidy-row-desc">全程在后台静默执行，不弹任何窗口，支持断点续传。</span>
+          </div>
+          <button type="button" class="text-action is-accent tidy-row-action" id="btn-silent-backfill">静默补齐</button>
+        </div>
+        ` : ''}
         <div class="tidy-row">
           <div class="tidy-row-main">
             <span class="tidy-row-title">${state.tidy.stats.count} 张首屏图 · 占用 ${formatBytes(state.tidy.stats.totalBytes)}</span>
@@ -1333,8 +1389,53 @@ function bindEvents() {
 
     const expandBtn = e.target.closest('[data-expand-group]');
     if (expandBtn) {
-      state.expandedGroupsInAll.add(expandBtn.dataset.expandGroup);
-      renderGallery();
+      const gid = expandBtn.dataset.expandGroup;
+      state.expandedGroupsInAll.add(gid);
+      const items = gid === 'loose' ? state.looseBookmarks : state.folderMap.get(gid)?.allBookmarks || [];
+      const section = expandBtn.closest('.gallery-section');
+      const grid = section?.querySelector('.card-grid');
+      if (grid) {
+        const renderedCount = grid.children.length;
+        const rest = items.slice(renderedCount);
+        const frag = document.createDocumentFragment();
+        rest.forEach((bm, idx) => {
+          frag.appendChild(createCardElement(bm, idx));
+        });
+        grid.appendChild(frag);
+        delete expandBtn.dataset.expandGroup;
+        expandBtn.dataset.collapseGroup = gid;
+        expandBtn.classList.remove('is-accent');
+        expandBtn.textContent = '收起';
+      } else {
+        renderGallery();
+      }
+      return;
+    }
+
+    const collapseBtn = e.target.closest('[data-collapse-group]');
+    if (collapseBtn) {
+      const gid = collapseBtn.dataset.collapseGroup;
+      state.expandedGroupsInAll.delete(gid);
+      const items = gid === 'loose' ? state.looseBookmarks : state.folderMap.get(gid)?.allBookmarks || [];
+      const section = collapseBtn.closest('.gallery-section');
+      const grid = section?.querySelector('.card-grid');
+      const previewLimit = getGroupPreviewLimit();
+      if (grid) {
+        while (grid.children.length > previewLimit) {
+          grid.lastElementChild.remove();
+        }
+        const hiddenCount = Math.max(0, items.length - previewLimit);
+        delete collapseBtn.dataset.collapseGroup;
+        if (hiddenCount > 0) {
+          collapseBtn.dataset.expandGroup = gid;
+          collapseBtn.classList.add('is-accent');
+          collapseBtn.textContent = `展开其余 ${hiddenCount} 项`;
+        } else {
+          collapseBtn.remove();
+        }
+      } else {
+        renderGallery();
+      }
       return;
     }
 
@@ -1343,6 +1444,19 @@ function bindEvents() {
       e.preventDefault();
       e.stopPropagation();
       await toggleFavoriteKey(unfavBtn.dataset.unfavKey);
+      return;
+    }
+
+    // Register redirect-aware open intent when clicking any bookmark card or favorite tile
+    const navLink = e.target.closest('a.card-link, a.card-meta, a.fav-tile-link');
+    if (navLink && !e.target.closest('[data-action], [data-unfav-key]')) {
+      const cardEl = navLink.closest('.bookmark-card[data-bookmark-id]');
+      const bm = cardEl
+        ? state.allBookmarks.find((b) => b.id === cardEl.dataset.bookmarkId)
+        : state.allBookmarks.find((b) => b.url === navLink.getAttribute('href'));
+      if (bm && !isBookmarkExcludedFromCover(bm)) {
+        sendBackgroundMessage({ type: 'REGISTER_OPEN_INTENT', key: bm.key, url: bm.url });
+      }
       return;
     }
 
@@ -1365,12 +1479,12 @@ function bindEvents() {
         showToast('复制失败，请手动复制');
       }
     } else if (action === 'recapture') {
-      if (!isCapturableUrl(bm.url)) {
-        showToast('系统内置页面不支持截取首屏');
+      if (!isCapturableUrl(bm.url) || isPrivateOrInternalUrl(bm.url)) {
+        showToast('内网或系统地址不需要远程抓取封面');
         return;
       }
       sendBackgroundMessage({ type: 'START_BATCH_CAPTURE', items: [bm], force: true });
-      showToast(`正在重新截取「${bm.title}」首屏`);
+      showToast(`已在后台静默刷新「${bm.title}」首屏`);
     } else if (action === 'move') {
       openMovePopover(bm.id, actionBtn);
     }
@@ -1434,7 +1548,13 @@ function bindEvents() {
     if (e.target === els.spotlightOverlay) closeSpotlight();
   });
   els.spotlightResults.addEventListener('click', (e) => {
-    if (e.target.closest('.spotlight-item')) {
+    const itemEl = e.target.closest('.spotlight-item');
+    if (itemEl) {
+      const idx = Number(itemEl.dataset.spotlightIdx);
+      const chosen = state.spotlight.results[idx];
+      if (chosen && !isBookmarkExcludedFromCover(chosen)) {
+        sendBackgroundMessage({ type: 'REGISTER_OPEN_INTENT', key: chosen.key, url: chosen.url });
+      }
       closeSpotlight();
     }
   });
@@ -1460,6 +1580,9 @@ function bindEvents() {
       e.preventDefault();
       const chosen = state.spotlight.results[state.spotlight.activeIndex];
       if (chosen) {
+        if (!isBookmarkExcludedFromCover(chosen)) {
+          sendBackgroundMessage({ type: 'REGISTER_OPEN_INTENT', key: chosen.key, url: chosen.url });
+        }
         window.open(chosen.url, '_blank', 'noopener,noreferrer');
         closeSpotlight();
       }
@@ -1551,6 +1674,31 @@ function bindEvents() {
       state.prefs.autoCapture = !state.prefs.autoCapture;
       await savePreferences({ autoCapture: state.prefs.autoCapture });
       renderTidyContent();
+      return;
+    }
+
+    // 7. Toggle excluded internal folder
+    const exclSwitch = e.target.closest('[data-toggle-excluded]');
+    if (exclSwitch) {
+      const fid = exclSwitch.dataset.toggleExcluded;
+      const set = new Set(state.prefs.excludedFolderIds || []);
+      if (set.has(fid)) set.delete(fid);
+      else set.add(fid);
+      state.prefs.excludedFolderIds = Array.from(set);
+      await savePreferences({ excludedFolderIds: state.prefs.excludedFolderIds });
+      renderTidyContent();
+      showToast('已更新跳过封面的分组配置');
+      return;
+    }
+
+    // 8. Trigger quiet background backfill from Settings
+    if (e.target.closest('#btn-silent-backfill')) {
+      const missing = getMissingCapturableBookmarks();
+      if (missing.length > 0) {
+        closeTidyDrawer();
+        sendBackgroundMessage({ type: 'START_BATCH_CAPTURE', items: missing, force: false });
+        showToast(`已启动后台静默补齐 (${missing.length} 项)，全程不弹窗`);
+      }
       return;
     }
 
