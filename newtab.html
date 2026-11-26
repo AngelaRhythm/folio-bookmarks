@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Folio</title>
+  <link rel="stylesheet" href="styles/folio.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <!-- Mobile backdrop for drawer sidebar -->
+    <div id="sidebar-backdrop" class="sidebar-backdrop" aria-hidden="true"></div>
+
+    <!-- Ultra-slim collapsible left sidebar -->
+    <aside id="sidebar" class="sidebar" aria-label="书签文件夹导航">
+      <div class="sidebar-top">
+        <a href="#all" class="brand-link" id="brand-home" title="回到全部书签">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-wordmark">Folio</span>
+        </a>
+        <button type="button" id="btn-collapse-sidebar" class="icon-btn sidebar-toggle" title="收起或展开侧边栏 ([)" aria-label="收起或展开侧边栏">
+        </button>
+      </div>
+
+      <nav class="sidebar-nav" id="sidebar-nav" aria-label="文件夹目录">
+        <!-- Populated dynamically -->
+      </nav>
+
+      <div class="sidebar-footer">
+        <button type="button" id="btn-open-tidy" class="rail-action" data-tooltip="整理与分组建议 (⇧⌘O)" aria-label="整理与分组建议">
+          <span class="rail-icon" id="icon-rail-tidy"></span>
+          <span class="rail-label">整理建议</span>
+          <span class="rail-hint" id="tidy-count-hint"></span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Gallery Workspace -->
+    <main id="workspace" class="workspace">
+      <header id="topbar" class="topbar">
+        <div class="topbar-left">
+          <button type="button" id="btn-mobile-menu" class="icon-btn mobile-menu-btn" aria-label="打开文件夹菜单"></button>
+          <div class="title-group">
+            <h1 id="view-title" class="view-title">全部书签</h1>
+            <span id="view-count" class="view-count">0</span>
+          </div>
+        </div>
+
+        <div class="topbar-controls">
+          <!-- Quiet Spotlight search trigger -->
+          <button type="button" id="btn-topbar-search" class="search-trigger" aria-label="搜索书签">
+            <span class="search-trigger-icon" id="icon-topbar-search"></span>
+            <span class="search-trigger-text">搜索书签</span>
+            <span class="search-trigger-key">⌘K</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Live Batch Capture Progress Strip -->
+      <div id="batch-banner" class="batch-banner" hidden>
+        <div class="batch-banner-info">
+          <span class="batch-spinner" aria-hidden="true"></span>
+          <span id="batch-banner-text" class="batch-banner-text">正在补采首屏...</span>
+        </div>
+        <div class="batch-banner-right">
+          <div class="batch-bar-track">
+            <div id="batch-bar-fill" class="batch-bar-fill"></div>
+          </div>
+          <button type="button" id="btn-stop-batch" class="text-action">停止</button>
+        </div>
+      </div>
+
+      <!-- Optional Subfolder Strip when viewing a parent folder with nested subfolders -->
+      <div id="subfolder-bar" class="subfolder-bar" hidden></div>
+
+      <!-- Gallery Canvas -->
+      <div id="gallery-root" class="gallery-root" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <!-- First-Time Sync & Capture Onboarding Modal -->
+  <div id="onboarding-overlay" class="modal-overlay modal-centered" hidden aria-hidden="true">
+    <div class="onboarding-dialog" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+      <div class="onboarding-mark" id="onboarding-mark" aria-hidden="true"></div>
+      <h2 id="onboarding-title" class="onboarding-title">已关联你的书签文件夹</h2>
+      <p id="onboarding-desc" class="onboarding-desc"></p>
+      <div class="onboarding-actions">
+        <button type="button" id="btn-onboarding-start" class="primary-action onboarding-primary">全部捕捉一次首屏</button>
+        <button type="button" id="btn-onboarding-skip" class="text-action">暂不，日常浏览时自动补齐</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Spotlight Search Overlay -->
+  <div id="spotlight-overlay" class="modal-overlay" hidden aria-hidden="true">
+    <div class="spotlight-dialog" role="dialog" aria-modal="true" aria-label="搜索书签">
+      <div class="spotlight-input-row">
+        <span class="spotlight-icon" id="icon-spotlight-search"></span>
+        <input
+          type="text"
+          id="spotlight-input"
+          class="spotlight-input"
+          placeholder="输入标题、网址或文件夹名称..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span class="spotlight-esc">Esc</span>
+      </div>
+      <div id="spotlight-results" class="spotlight-results" role="listbox"></div>
+    </div>
+  </div>
+
+  <!-- Tidy Studio Slide-Over Drawer -->
+  <div id="tidy-overlay" class="drawer-overlay" hidden aria-hidden="true">
+    <aside class="tidy-drawer" role="dialog" aria-modal="true" aria-label="书签整理与分组建议">
+      <div class="drawer-header">
+        <h2 class="drawer-title">整理与分组建议</h2>
+        <button type="button" id="btn-close-tidy" class="icon-btn" aria-label="关闭整理面板"></button>
+      </div>
+
+      <div class="drawer-tabs-wrap">
+        <div id="tidy-tabs" class="segmented-control segmented-full" role="tablist">
+          <span class="segmented-thumb" aria-hidden="true"></span>
+          <button type="button" role="tab" class="segmented-option" data-tab="suggestions" aria-selected="true">分组建议</button>
+          <button type="button" role="tab" class="segmented-option" data-tab="health" aria-selected="false">书签体检</button>
+          <button type="button" role="tab" class="segmented-option" data-tab="settings" aria-selected="false">缓存与设置</button>
+        </div>
+      </div>
+
+      <div id="tidy-content" class="drawer-body"></div>
+    </aside>
+  </div>
+
+  <!-- Floating Move-to-Folder Popover -->
+  <div id="move-popover" class="move-popover" hidden role="menu" aria-label="移动到文件夹"></div>
+
+  <!-- Subtle Floating Tooltip for Collapsed Rail -->
+  <div id="rail-tooltip" class="rail-tooltip" hidden aria-hidden="true"></div>
+
+  <!-- Subtle Toast Notification -->
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
