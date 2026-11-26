@@ -190,10 +190,54 @@
 
   <!-- Card Right-Click Context Menu -->
   <div id="card-context-menu" class="context-menu" hidden role="menu" aria-label="书签操作">
-    <button type="button" id="ctx-remove-bookmark" class="context-menu-item is-danger" role="menuitem">
+    <button type="button" class="context-menu-item" data-ctx-action="open-tab" role="menuitem">
+      <span class="context-menu-icon" id="icon-ctx-tab"></span>
+      <span>在新标签页中打开</span>
+    </button>
+    <button type="button" class="context-menu-item" data-ctx-action="open-window" role="menuitem">
+      <span class="context-menu-icon" id="icon-ctx-window"></span>
+      <span>在新窗口中打开</span>
+    </button>
+    <button type="button" class="context-menu-item" data-ctx-action="open-split" role="menuitem">
+      <span class="context-menu-icon" id="icon-ctx-split"></span>
+      <span>在拆分视图中打开</span>
+    </button>
+    <button type="button" class="context-menu-item" data-ctx-action="open-incognito" role="menuitem">
+      <span class="context-menu-icon" id="icon-ctx-incognito"></span>
+      <span>在隐身窗口中打开</span>
+    </button>
+    <div class="context-menu-divider" role="separator"></div>
+    <button type="button" class="context-menu-item" data-ctx-action="edit" role="menuitem">
+      <span class="context-menu-icon" id="icon-ctx-edit"></span>
+      <span>修改...</span>
+    </button>
+    <div class="context-menu-divider" role="separator"></div>
+    <button type="button" id="ctx-remove-bookmark" class="context-menu-item is-danger" data-ctx-action="remove" role="menuitem">
       <span class="context-menu-icon" id="icon-ctx-trash"></span>
       <span>移除书签</span>
     </button>
+  </div>
+
+  <!-- Minimal Edit Bookmark Modal (Name & URL only) -->
+  <div id="edit-bookmark-overlay" class="modal-overlay modal-centered" hidden aria-hidden="true">
+    <form id="edit-bookmark-form" class="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-bookmark-title" novalidate>
+      <h2 id="edit-bookmark-title" class="edit-dialog-title">修改书签</h2>
+      <div class="edit-dialog-fields">
+        <label class="edit-field-row" for="edit-bm-title">
+          <span class="edit-field-label">名称</span>
+          <input type="text" id="edit-bm-title" class="edit-field-input" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="edit-field-row" for="edit-bm-url">
+          <span class="edit-field-label">网址</span>
+          <input type="url" id="edit-bm-url" class="edit-field-input" autocomplete="off" spellcheck="false" />
+        </label>
+        <p id="edit-bm-error" class="edit-field-error" hidden></p>
+      </div>
+      <div class="edit-dialog-actions">
+        <button type="button" id="btn-edit-bm-cancel" class="btn-subtle edit-dialog-btn">取消</button>
+        <button type="submit" id="btn-edit-bm-save" class="primary-action edit-dialog-btn">保存</button>
+      </div>
+    </form>
   </div>
 
   <!-- Subtle Floating Tooltip for Collapsed Rail -->

@@ -353,6 +353,18 @@ export async function moveBookmark(id, destination) {
   return found.node;
 }
 
+export async function updateBookmark(id, changes) {
+  if (IS_EXTENSION) {
+    return chrome.bookmarks.update(id, changes);
+  }
+  const found = findNodeAndParent(mockTree, id);
+  if (!found || !found.node) return null;
+  if (typeof changes.title === 'string') found.node.title = changes.title;
+  if (typeof changes.url === 'string') found.node.url = changes.url;
+  emitMockBookmarkChange();
+  return found.node;
+}
+
 export async function removeBookmark(id) {
   if (IS_EXTENSION) {
     return chrome.bookmarks.remove(id);
@@ -409,6 +421,7 @@ export async function loadPreferences() {
     remoteCoverEnabled: false,
     initialCapturePrompted: false,
     favoriteKeys: [],
+    blurredKeys: [],
     excludedFolderIds: null
   };
 

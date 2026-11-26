@@ -1229,7 +1229,7 @@ body.is-scroll-locked {
 .context-menu {
   position: fixed;
   z-index: 85;
-  min-width: 152px;
+  min-width: 196px;
   padding: 5px;
   border-radius: var(--radius-md);
   background-color: var(--bg-surface);
@@ -1241,17 +1241,24 @@ body.is-scroll-locked {
   animation: dialogPop 130ms var(--ease-out);
 }
 
+.context-menu-divider {
+  height: 0.5px;
+  margin: 4px 6px;
+  background-color: var(--border-hairline);
+}
+
 .context-menu-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   width: 100%;
   padding: 8px 10px;
   border-radius: 6px;
-  font-size: var(--text-body);
-  font-weight: 480;
+  font-size: 0.875rem;
+  font-weight: 460;
   color: var(--text-secondary);
   text-align: left;
+  white-space: nowrap;
   transition: background-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
 }
 
@@ -1276,6 +1283,115 @@ body.is-scroll-locked {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
+  opacity: 0.82;
+}
+
+.context-menu-item:hover .context-menu-icon,
+.context-menu-item.is-danger .context-menu-icon {
+  opacity: 1;
+}
+
+/* Minimal Edit Bookmark Modal (Name & URL only) */
+.edit-dialog {
+  width: 100%;
+  max-width: 440px;
+  padding: 24px 24px 20px;
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-surface);
+  border: 0.5px solid var(--border-strong);
+  box-shadow: var(--shadow-popover);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: dialogPop 180ms var(--ease-out);
+}
+
+.edit-dialog-title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 620;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+}
+
+.edit-dialog-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.edit-field-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.edit-field-label {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.edit-field-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--border-strong);
+  background-color: var(--bg-surface-subtle);
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--t-fast) var(--ease-out),
+              background-color var(--t-fast) var(--ease-out),
+              box-shadow var(--t-fast) var(--ease-out);
+}
+
+.edit-field-input:focus {
+  background-color: var(--bg-surface);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.edit-field-error {
+  margin: 0 0 0 56px;
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+
+.edit-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.edit-dialog-btn {
+  min-width: 74px;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: var(--text-sm);
+  font-weight: 560;
+}
+
+.btn-subtle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0.5px solid var(--border-strong);
+  background-color: var(--bg-surface-subtle);
+  color: var(--text-secondary);
+  transition: background-color var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out);
+}
+
+.btn-subtle:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 /* Responsive 16:10 Card Grid: dynamic 1-4 columns (capped at 4 per row) */
@@ -1355,6 +1471,49 @@ body.is-scroll-locked {
 
 .bookmark-card:hover .card-thumb.is-loaded {
   transform: scale(1.024);
+}
+
+/* Per-Card Gaussian Blur Privacy Shield (completely obscures cover content) */
+.bookmark-card.is-cover-blurred .card-thumb,
+.bookmark-card.is-cover-blurred:hover .card-thumb.is-loaded,
+.bookmark-card.is-cover-blurred .card-placeholder {
+  filter: blur(26px) saturate(0.75);
+  transform: scale(1.24);
+}
+
+.card-blur-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: oklch(0.97 0 0 / 0.34);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--text-muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-base) var(--ease-out);
+}
+
+[data-theme="dark"] .card-blur-veil {
+  background-color: oklch(0.14 0 0 / 0.44);
+}
+
+.card-blur-veil svg {
+  width: 20px;
+  height: 20px;
+  opacity: 0.48;
+}
+
+.bookmark-card.is-cover-blurred .card-blur-veil {
+  opacity: 1;
+}
+
+.spotlight-mini-thumb.is-cover-blurred img {
+  filter: blur(10px) saturate(0.75);
+  transform: scale(1.25);
 }
 
 /* Architectural Ambient Placeholder (when screenshot not yet captured) */
@@ -1452,7 +1611,7 @@ body.is-scroll-locked {
 }
 
 .bookmark-card:hover .card-actions,
-.bookmark-card:focus-within .card-actions {
+.bookmark-card:has(:focus-visible) .card-actions {
   opacity: 1;
   transform: translateY(0);
 }
@@ -1471,6 +1630,16 @@ body.is-scroll-locked {
 .card-action-btn:hover {
   background-color: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.card-action-btn.is-active {
+  background-color: var(--accent-soft);
+  color: var(--accent);
+}
+
+.card-action-btn.is-active:hover {
+  background-color: var(--accent-soft);
+  color: var(--accent);
 }
 
 /* Bottom-Right Card Favorite Icon */
@@ -1500,7 +1669,7 @@ body.is-scroll-locked {
 }
 
 .bookmark-card:hover .card-fav-btn,
-.bookmark-card:focus-within .card-fav-btn {
+.bookmark-card:has(:focus-visible) .card-fav-btn {
   opacity: 1;
   transform: translateY(0);
 }
@@ -2667,7 +2836,9 @@ body.is-scroll-locked {
   html.has-custom-cursor .nav-item *,
   html.has-custom-cursor .subfolder-pill,
   html.has-custom-cursor .card-action-btn[data-action="move"],
-  html.has-custom-cursor .card-action-btn[data-action="move"] * {
+  html.has-custom-cursor .card-action-btn[data-action="move"] *,
+  html.has-custom-cursor .card-action-btn[data-action="toggle-blur"],
+  html.has-custom-cursor .card-action-btn[data-action="toggle-blur"] * {
     cursor: var(--folio-cursor-violet, pointer);
   }
 
@@ -2680,8 +2851,8 @@ body.is-scroll-locked {
   /* Destructive actions -> Rose pointer */
   html.has-custom-cursor .btn-danger,
   html.has-custom-cursor .btn-danger *,
-  html.has-custom-cursor .context-item.is-danger,
-  html.has-custom-cursor .context-item.is-danger *,
+  html.has-custom-cursor .context-menu-item.is-danger,
+  html.has-custom-cursor .context-menu-item.is-danger *,
   html.has-custom-cursor .chip-remove,
   html.has-custom-cursor .chip-remove * {
     cursor: var(--folio-cursor-rose, pointer);

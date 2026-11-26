@@ -53,20 +53,34 @@ python3 -m http.server 8765 --bind 127.0.0.1
 
 ```text
 folio-bookmarks/
-├── manifest.json            # Chrome Extension Manifest V3 配置
-├── newtab.html              # 新标签页主界面骨架、引导弹窗、Spotlight 与整理抽屉
+├── manifest.json                 # Chrome Extension Manifest V3 配置
+├── newtab.html                   # 新标签页主界面骨架、OKLCH 图标渐变、Spotlight 与右侧分屏设置
 ├── styles/
-│   └── folio.css            # 浅/深双色设计 Token、3 级字号体系与微动效样式
-├── icons/                   # 扩展图标 (16 / 32 / 48 / 128 px)
-└── src/
-    ├── app.js               # 主画廊渲染、实时联动、拖拽归类、72h New 标签与整理交互
-    ├── background.js        # MV3 Service Worker：无感截屏、WebP 压缩与批量补采队列
-    ├── icons.js             # 极简 1.5px 描边 SVG 图标集
-    └── shared/
-        ├── chrome-bridge.js # Chrome API 适配层（扩展外自动降级为预览 Mock）
-        ├── db.js            # IndexedDB 缩略图存储与孤儿缓存回收
-        └── url.js           # URL 规范化、域名解析、协议过滤与占位色相工具
+│   └── folio.css                 # OKLCH 浅/深双色 Token、0.5px 描边体系、悬浮滚动条与自定义指针样式
+├── icons/                        # 扩展图标 (16 / 32 / 48 / 128 px)
+├── src/
+│   ├── app.js                    # 主画廊渲染、实时联动、拖拽归类、IME 兼容搜索、设置与交互增强
+│   ├── background.js             # MV3 Service Worker：纯本地截屏、可选 Plan A 脱敏远程补齐与缓存回收
+│   ├── icons.js                  # Nucleo Glass（侧栏）+ Tabler Icons（全站控件）双轨图标集
+│   └── shared/
+│       ├── chrome-bridge.js      # Chrome API 适配层（扩展外自动降级为 HTTP 预览 Mock）
+│       ├── db.js                 # IndexedDB 缩略图存储与孤儿缓存回收
+│       └── url.js                # URL 规范化、内网识别、Plan A 根域名脱敏与占位色相工具
+├── AGENTS.md                     # AI Agent 改造总入口（核心约束、文件索引与验证命令）
+└── docs/
+    ├── ARCHITECTURE.md           # 模块架构、数据 Schema、消息协议与本地/远程链路详解
+    ├── UI_DESIGN_SYSTEM.md       # OKLCH 视觉规范、排版、0.5px 描边与特色微交互文档
+    └── CUSTOMIZATION_GUIDE.md    # 常见二次开发配方（Recipes）与避坑清单
 ```
+
+## 文档与 AI 二次开发指南
+
+仓库已为二次开发和 AI 编程助手（Antigravity、Claude Code、Cursor、Codex 等）准备好结构化文档，下载到本地后可直接让 Agent 阅读并按需定制：
+
+- **[AGENTS.md](AGENTS.md)**：AI Agent 首读入口 —— 项目不可破坏的架构/隐私红线、快速「改哪里找哪个文件」速查表与自动化验收命令。
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**：完整技术架构 —— UI 线程与 Service Worker 边界、`chrome.storage.local` / IndexedDB 数据结构、消息协议与纯本地/脱敏远程截屏全链路。
+- **[docs/UI_DESIGN_SYSTEM.md](docs/UI_DESIGN_SYSTEM.md)**：视觉与交互规范 —— `oklch.fyi` 风格无彩色中性 Token、Nucleo Glass / Tabler 双轨图标、左侧交互网格、内容区悬浮滚动条与零延迟自定义指针实现。
+- **[docs/CUSTOMIZATION_GUIDE.md](docs/CUSTOMIZATION_GUIDE.md)**：实战改造配方 —— 新增设置项、改列数/比例、定制文件夹图标、扩展卡片操作与 8 条常见避坑指南。
 
 ## 权限与隐私说明
 

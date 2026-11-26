@@ -27,7 +27,8 @@ import {
   seedMockThumbnailsIfNeeded,
   sendBackgroundMessage,
   subscribeBookmarkChanges,
-  subscribeRuntimeMessages
+  subscribeRuntimeMessages,
+  updateBookmark
 } from './shared/chrome-bridge.js';
 
 // New tag expires 72 hours after bookmark creation
@@ -48,6 +49,7 @@ const state = {
     remoteCoverEnabled: false,
     initialCapturePrompted: false,
     favoriteKeys: [],
+    blurredKeys: [],
     excludedFolderIds: null
   },
   rootBarId: '1',
@@ -105,6 +107,13 @@ const els = {
   movePopover: document.getElementById('move-popover'),
   cardContextMenu: document.getElementById('card-context-menu'),
   ctxRemoveBookmark: document.getElementById('ctx-remove-bookmark'),
+  editBookmarkOverlay: document.getElementById('edit-bookmark-overlay'),
+  editBookmarkForm: document.getElementById('edit-bookmark-form'),
+  editBmTitle: document.getElementById('edit-bm-title'),
+  editBmUrl: document.getElementById('edit-bm-url'),
+  editBmError: document.getElementById('edit-bm-error'),
+  btnEditBmCancel: document.getElementById('btn-edit-bm-cancel'),
+  btnEditBmSave: document.getElementById('btn-edit-bm-save'),
   railTooltip: document.getElementById('rail-tooltip'),
   toast: document.getElementById('toast')
 };
@@ -458,6 +467,35 @@ function renderSidebar() {
   els.sidebarNav.appendChild(frag);
 }
 
+function isBlurredKey(key) {
+  return Array.isArray(state.prefs.blurredKeys) && state.prefs.blurredKeys.includes(key);
+}
+
+async function toggleBlurKey(key) {
+  const current = Array.isArray(state.prefs.blurredKeys) ? [...state.prefs.blurredKeys] : [];
+  const idx = current.indexOf(key);
+  let blurred = false;
+  if (idx >= 0) {
+    current.splice(idx, 1);
+  } else {
+    current.push(key);
+    blurred = true;
+  }
+  state.prefs.blurredKeys = current;
+  await savePreferences({ blurredKeys: current });
+
+  const esc = CSS.escape(key);
+  document.querySelectorAll(`.bookmark-card[data-key="${esc}"]`).forEach((card) => {
+    card.classList.toggle('is-cover-blurred', blurred);
+  });
+  document.querySelectorAll(`.card-action-btn[data-action="toggle-blur"][data-key="${esc}"]`).forEach((btn) => {
+    btn.classList.toggle('is-active', blurred);
+    btn.setAttribute('aria-pressed', blurred ? 'true' : 'false');
+    btn.setAttribute('aria-label', blurred ? '显示封面' : '隐藏封面');
+    btn.innerHTML = blurred ? ICONS.eyeOff : ICONS.eye;
+  });
+}
+
 function isFavoriteKey(key) {
   return Array.isArray(state.prefs.favoriteKeys) && state.prefs.favoriteKeys.includes(key);
 }
@@ -565,11 +603,13 @@ function syncFavoritesSection() {
 // --- Card Element Builder ---
 function createCardElement(bm, index) {
   const card = document.createElement('article');
-  card.className = 'bookmark-card';
+  const isBlurred = isBlurredKey(bm.key);
+  card.className = `bookmark-card${isBlurred ? ' is-cover-blurred' : ''}`;
   card.style.setProperty('--stagger-i', String(Math.min(index, 12)));
   card.style.setProperty('--card-hue', String(getDomainHue(bm.url)));
   card.draggable = true;
   card.dataset.bookmarkId = bm.id;
+  card.dataset.key = bm.key;
 
   const faviconUrl = getFaviconUrl(bm.url, 32);
   const initialLetter = escapeHtml((bm.host || bm.title || '?')[0].toUpperCase());
@@ -600,8 +640,10 @@ function createCardElement(bm, index) {
           <span class="placeholder-host">${escapeHtml(bm.host)}</span>
         </div>
         ${hideCover ? '' : `<img class="card-thumb" data-thumb-key="${escapeHtml(bm.key)}" alt="" decoding="async" />`}
+        <div class="card-blur-veil" aria-hidden="true">${ICONS.eyeOff}</div>
       </a>
       <div class="card-actions">
+        <button type="button" class="card-action-btn${isBlurred ? ' is-active' : ''}" data-action="toggle-blur" data-id="${escapeHtml(bm.id)}" data-key="${escapeHtml(bm.key)}" aria-label="${isBlurred ? '显示封面' : '隐藏封面'}" aria-pressed="${isBlurred ? 'true' : 'false'}">${isBlurred ? ICONS.eyeOff : ICONS.eye}</button>
         ${!hideCover && state.prefs.remoteCoverEnabled && toSafePublicOrigin(bm.url) ? `<button type="button" class="card-action-btn" data-action="recapture" data-id="${escapeHtml(bm.id)}" aria-label="重新抓取首屏">${ICONS.refresh}</button>` : ''}
         <button type="button" class="card-action-btn" data-action="copy" data-id="${escapeHtml(bm.id)}" aria-label="复制链接">${ICONS.copy}</button>
         <button type="button" class="card-action-btn" data-action="move" data-id="${escapeHtml(bm.id)}" aria-label="移动到其他文件夹">${ICONS.move}</button>
@@ -884,7 +926,11 @@ function closeOnboardingPrompt() {
 
 // --- Spotlight Search ---
 function syncScrollLock() {
-  const locked = Boolean(state.spotlight.open || !els.onboardingOverlay.hidden);
+  const locked = Boolean(
+    state.spotlight.open ||
+      !els.onboardingOverlay.hidden ||
+      (els.editBookmarkOverlay && !els.editBookmarkOverlay.hidden)
+  );
   document.documentElement.classList.toggle('is-scroll-locked', locked);
   document.body.classList.toggle('is-scroll-locked', locked);
 }
@@ -946,7 +992,7 @@ async function renderSpotlightList() {
       const selected = idx === state.spotlight.activeIndex ? ' is-selected' : '';
       return `
         <a href="${escapeHtml(bm.url)}" class="spotlight-item${selected}" target="_blank" rel="noopener noreferrer" data-spotlight-idx="${idx}" role="option" aria-selected="${idx === state.spotlight.activeIndex}">
-          <div class="spotlight-mini-thumb" data-spot-key="${escapeHtml(bm.key)}">
+          <div class="spotlight-mini-thumb${isBlurredKey(bm.key) ? ' is-cover-blurred' : ''}" data-spot-key="${escapeHtml(bm.key)}">
             ${favicon ? `<img src="${escapeHtml(favicon)}" alt="" style="width:16px;height:16px;object-fit:contain;" />` : `<span>${escapeHtml(bm.host[0]?.toUpperCase() || '·')}</span>`}
           </div>
           <div class="spotlight-item-text">
@@ -1266,13 +1312,13 @@ function closeMovePopover() {
   els.movePopover.hidden = true;
 }
 
-// --- Card Right-Click Context Menu ---
+// --- Card Right-Click Context Menu & Edit Bookmark Modal ---
 function openCardContextMenu(bookmarkId, clientX, clientY) {
   state.contextBookmarkId = bookmarkId;
   closeMovePopover();
   els.cardContextMenu.hidden = false;
-  const menuW = els.cardContextMenu.offsetWidth || 156;
-  const menuH = els.cardContextMenu.offsetHeight || 48;
+  const menuW = els.cardContextMenu.offsetWidth || 200;
+  const menuH = els.cardContextMenu.offsetHeight || 240;
   const left = Math.min(window.innerWidth - menuW - 10, Math.max(10, clientX));
   const top = Math.min(window.innerHeight - menuH - 10, Math.max(10, clientY));
   els.cardContextMenu.style.left = `${left}px`;
@@ -1282,6 +1328,157 @@ function openCardContextMenu(bookmarkId, clientX, clientY) {
 function closeCardContextMenu() {
   state.contextBookmarkId = null;
   if (els.cardContextMenu) els.cardContextMenu.hidden = true;
+}
+
+function openEditBookmarkModal(bm) {
+  if (!bm || !els.editBookmarkOverlay) return;
+  state.editBookmarkId = bm.id;
+  els.editBmTitle.value = bm.title || '';
+  els.editBmUrl.value = bm.url || '';
+  els.editBmError.hidden = true;
+  els.editBmError.textContent = '';
+  els.editBookmarkOverlay.hidden = false;
+  els.editBookmarkOverlay.setAttribute('aria-hidden', 'false');
+  els.app.classList.add('is-spotlight-open');
+  syncScrollLock();
+  requestAnimationFrame(() => {
+    els.editBmTitle.focus();
+    els.editBmTitle.select();
+  });
+}
+
+function closeEditBookmarkModal() {
+  if (!els.editBookmarkOverlay || els.editBookmarkOverlay.hidden) return;
+  state.editBookmarkId = null;
+  els.editBookmarkOverlay.hidden = true;
+  els.editBookmarkOverlay.setAttribute('aria-hidden', 'true');
+  els.editBmError.hidden = true;
+  els.app.classList.remove('is-spotlight-open');
+  syncScrollLock();
+}
+
+function normalizeEditedUrl(rawInput) {
+  const trimmed = (rawInput || '').trim();
+  if (!trimmed) return null;
+  const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    if (!parsed.protocol || !parsed.href) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+async function openBookmarkInNewTab(bm) {
+  if (!bm) return;
+  if (!isBookmarkExcludedFromCover(bm)) {
+    sendBackgroundMessage({ type: 'REGISTER_OPEN_INTENT', key: bm.key, url: bm.url });
+  }
+  if (IS_EXTENSION && chrome.tabs?.create) {
+    await chrome.tabs.create({ url: bm.url, active: true });
+  } else {
+    window.open(bm.url, '_blank', 'noopener,noreferrer');
+  }
+}
+
+async function openBookmarkInNewWindow(bm) {
+  if (!bm) return;
+  if (!isBookmarkExcludedFromCover(bm)) {
+    sendBackgroundMessage({ type: 'REGISTER_OPEN_INTENT', key: bm.key, url: bm.url });
+  }
+  if (IS_EXTENSION && chrome.windows?.create) {
+    await chrome.windows.create({ url: bm.url });
+  } else {
+    window.open(bm.url, '_blank', 'noopener,noreferrer,width=1200,height=800');
+  }
+}
+
+async function openBookmarkInSplitView(bm) {
+  if (!bm) return;
+  if (!isBookmarkExcludedFromCover(bm)) {
+    sendBackgroundMessage({ type: 'REGISTER_OPEN_INTENT', key: bm.key, url: bm.url });
+  }
+
+  if (IS_EXTENSION && chrome.tabs?.getCurrent) {
+    try {
+      const currentTab = await chrome.tabs.getCurrent();
+      if (currentTab && typeof currentTab.id === 'number') {
+        const notSplit = currentTab.splitViewId === undefined || currentTab.splitViewId === -1;
+        // 1) Try Chrome 155+ native Tabs Split View API (splitWithTabId)
+        if (notSplit) {
+          try {
+            await chrome.tabs.create({
+              url: bm.url,
+              index: currentTab.index + 1,
+              splitWithTabId: currentTab.id
+            });
+            return;
+          } catch {
+            // Fall through to createSplit / side-by-side window fallback
+          }
+          // 2) Try chrome.tabs.createSplit if exposed
+          if (typeof chrome.tabs.createSplit === 'function') {
+            try {
+              const created = await chrome.tabs.create({
+                url: bm.url,
+                index: currentTab.index + 1,
+                active: true
+              });
+              if (created?.id) {
+                await chrome.tabs.createSplit([currentTab.id, created.id]);
+                return;
+              }
+            } catch {
+              // Fall through
+            }
+          }
+        }
+      }
+    } catch {
+      // Fall through to side-by-side companion window
+    }
+
+    // 3) Graceful fallback for Chrome < 155 or already-split tabs: right-half companion window
+    if (chrome.windows?.getCurrent && chrome.windows?.create) {
+      try {
+        const win = await chrome.windows.getCurrent();
+        const halfW = Math.max(480, Math.round((win.width || 1280) / 2));
+        const left = Math.round((win.left || 0) + (win.width || 1280) - halfW);
+        await chrome.windows.create({
+          url: bm.url,
+          left,
+          top: win.top || 0,
+          width: halfW,
+          height: win.height || 860
+        });
+        return;
+      } catch {
+        // Final fallback: new tab
+      }
+    }
+    await chrome.tabs.create({ url: bm.url, active: true });
+    return;
+  }
+
+  // HTTP preview fallback: side-by-side popup
+  const halfW = Math.max(480, Math.round(window.outerWidth / 2));
+  const left = Math.round(window.screenX + window.outerWidth - halfW);
+  window.open(bm.url, '_blank', `noopener,noreferrer,left=${left},top=${window.screenY},width=${halfW},height=${window.outerHeight}`);
+}
+
+async function openBookmarkInIncognito(bm) {
+  if (!bm) return;
+  // Never register capture intent for incognito browsing
+  if (IS_EXTENSION && chrome.windows?.create) {
+    try {
+      await chrome.windows.create({ url: bm.url, incognito: true });
+    } catch {
+      showToast('无法打开隐身窗口，请在扩展详情中允许无痕模式');
+    }
+  } else {
+    showToast('隐身窗口仅在 Chrome 扩展模式下可用');
+  }
 }
 
 // --- Data Refresh Cycle ---
@@ -1322,10 +1519,17 @@ function bindEvents() {
   document.getElementById('icon-topbar-settings').innerHTML = ICONS.settings;
   document.getElementById('icon-topbar-search').innerHTML = ICONS.search;
   document.getElementById('icon-spotlight-search').innerHTML = ICONS.search;
-  const ctxTrash = document.getElementById('icon-ctx-trash');
-  if (ctxTrash) ctxTrash.innerHTML = ICONS.trash;
-  const footerTopIcon = document.getElementById('icon-footer-top');
-  if (footerTopIcon) footerTopIcon.innerHTML = ICONS.arrowUp;
+  const setIcon = (id, svg) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = svg;
+  };
+  setIcon('icon-ctx-tab', ICONS.externalLink);
+  setIcon('icon-ctx-window', ICONS.appWindow);
+  setIcon('icon-ctx-split', ICONS.splitView);
+  setIcon('icon-ctx-incognito', ICONS.incognito);
+  setIcon('icon-ctx-edit', ICONS.edit);
+  setIcon('icon-ctx-trash', ICONS.trash);
+  setIcon('icon-footer-top', ICONS.arrowUp);
 
   if (els.btnBackToTop) {
     els.btnBackToTop.addEventListener('click', () => {
@@ -1563,9 +1767,13 @@ function bindEvents() {
     const action = actionBtn.dataset.action;
     const bm = state.allBookmarks.find((b) => b.id === actionBtn.dataset.id);
     if (!bm) return;
+    // Release mouse-click focus so card hover bars dismiss cleanly when pointer leaves
+    if (e.detail > 0) actionBtn.blur();
 
     if (action === 'favorite') {
       await toggleFavoriteKey(bm.key, bm.title);
+    } else if (action === 'toggle-blur') {
+      await toggleBlurKey(bm.key);
     } else if (action === 'copy') {
       try {
         await navigator.clipboard.writeText(bm.url);
@@ -1616,9 +1824,9 @@ function bindEvents() {
     if (!IS_EXTENSION) await refreshAllData();
   });
 
-  // Right-click context menu on any bookmark card
+  // Right-click context menu on any bookmark card (or favorite card)
   els.galleryRoot.addEventListener('contextmenu', (e) => {
-    const card = e.target.closest('.bookmark-card[data-bookmark-id]');
+    const card = e.target.closest('.bookmark-card[data-bookmark-id], .fav-card[data-bookmark-id]');
     if (!card) {
       closeCardContextMenu();
       return;
@@ -1627,22 +1835,109 @@ function bindEvents() {
     openCardContextMenu(card.dataset.bookmarkId, e.clientX, e.clientY);
   });
 
-  els.ctxRemoveBookmark.addEventListener('click', async () => {
+  els.cardContextMenu.addEventListener('click', async (e) => {
+    const item = e.target.closest('[data-ctx-action]');
+    if (!item) return;
+    const action = item.dataset.ctxAction;
     const bmId = state.contextBookmarkId;
     closeCardContextMenu();
     if (!bmId) return;
     const bm = state.allBookmarks.find((b) => b.id === bmId);
     if (!bm) return;
-    await removeBookmark(bm.id);
-    // Clean up favorite key if no duplicate bookmark shares this key
-    const remainingSameKey = state.allBookmarks.filter((b) => b.id !== bm.id && b.key === bm.key);
-    if (remainingSameKey.length === 0 && isFavoriteKey(bm.key)) {
-      const nextFavs = (state.prefs.favoriteKeys || []).filter((k) => k !== bm.key);
-      state.prefs.favoriteKeys = nextFavs;
-      await savePreferences({ favoriteKeys: nextFavs });
+
+    if (action === 'open-tab') {
+      await openBookmarkInNewTab(bm);
+    } else if (action === 'open-window') {
+      await openBookmarkInNewWindow(bm);
+    } else if (action === 'open-split') {
+      await openBookmarkInSplitView(bm);
+    } else if (action === 'open-incognito') {
+      await openBookmarkInIncognito(bm);
+    } else if (action === 'edit') {
+      openEditBookmarkModal(bm);
+    } else if (action === 'remove') {
+      await removeBookmark(bm.id);
+      const remainingSameKey = state.allBookmarks.filter((b) => b.id !== bm.id && b.key === bm.key);
+      if (remainingSameKey.length === 0) {
+        const patch = {};
+        if (isFavoriteKey(bm.key)) {
+          state.prefs.favoriteKeys = (state.prefs.favoriteKeys || []).filter((k) => k !== bm.key);
+          patch.favoriteKeys = state.prefs.favoriteKeys;
+        }
+        if (isBlurredKey(bm.key)) {
+          state.prefs.blurredKeys = (state.prefs.blurredKeys || []).filter((k) => k !== bm.key);
+          patch.blurredKeys = state.prefs.blurredKeys;
+        }
+        if (Object.keys(patch).length > 0) await savePreferences(patch);
+      }
+      showToast(`已移除书签「${bm.title}」`);
+      if (!IS_EXTENSION) await refreshAllData();
     }
-    showToast(`已移除书签「${bm.title}」`);
-    if (!IS_EXTENSION) await refreshAllData();
+  });
+
+  // Minimal Edit Bookmark Modal Events (Name & URL only, with CJK IME guard)
+  let editComposing = false;
+  els.editBookmarkForm.addEventListener('compositionstart', () => {
+    editComposing = true;
+  });
+  els.editBookmarkForm.addEventListener('compositionend', () => {
+    editComposing = false;
+  });
+  els.editBookmarkForm.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.isComposing || editComposing || e.keyCode === 229)) {
+      e.preventDefault();
+    }
+  });
+  els.btnEditBmCancel.addEventListener('click', closeEditBookmarkModal);
+  els.editBookmarkOverlay.addEventListener('click', (e) => {
+    if (e.target === els.editBookmarkOverlay) closeEditBookmarkModal();
+  });
+  els.editBookmarkForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const bmId = state.editBookmarkId;
+    if (!bmId) return;
+    const bm = state.allBookmarks.find((b) => b.id === bmId);
+    if (!bm) {
+      closeEditBookmarkModal();
+      return;
+    }
+
+    const nextTitle = els.editBmTitle.value.trim();
+    const nextUrl = normalizeEditedUrl(els.editBmUrl.value);
+    if (!nextUrl) {
+      els.editBmError.textContent = '请输入有效的网址';
+      els.editBmError.hidden = false;
+      els.editBmUrl.focus();
+      return;
+    }
+
+    const finalTitle = nextTitle || getDisplayHost(nextUrl) || nextUrl;
+    const oldKey = bm.key;
+    const newKey = normalizeUrl(nextUrl);
+
+    try {
+      await updateBookmark(bm.id, { title: finalTitle, url: nextUrl });
+      if (oldKey !== newKey) {
+        const patch = {};
+        if (isFavoriteKey(oldKey)) {
+          const nextFavs = (state.prefs.favoriteKeys || []).map((k) => (k === oldKey ? newKey : k));
+          state.prefs.favoriteKeys = Array.from(new Set(nextFavs));
+          patch.favoriteKeys = state.prefs.favoriteKeys;
+        }
+        if (isBlurredKey(oldKey)) {
+          const nextBlur = (state.prefs.blurredKeys || []).map((k) => (k === oldKey ? newKey : k));
+          state.prefs.blurredKeys = Array.from(new Set(nextBlur));
+          patch.blurredKeys = state.prefs.blurredKeys;
+        }
+        if (Object.keys(patch).length > 0) await savePreferences(patch);
+      }
+      closeEditBookmarkModal();
+      showToast('已保存书签修改');
+      if (!IS_EXTENSION) await refreshAllData();
+    } catch {
+      els.editBmError.textContent = '保存失败，请检查网址格式';
+      els.editBmError.hidden = false;
+    }
   });
 
   document.addEventListener('click', (e) => {
@@ -1898,7 +2193,8 @@ function bindEvents() {
     }
 
     if (e.key === 'Escape') {
-      if (!els.onboardingOverlay.hidden) closeOnboardingPrompt();
+      if (!els.editBookmarkOverlay.hidden) closeEditBookmarkModal();
+      else if (!els.onboardingOverlay.hidden) closeOnboardingPrompt();
       else if (state.spotlight.open) closeSpotlight();
       else if (state.tidy.open) closeTidyDrawer();
       else {
@@ -1908,7 +2204,7 @@ function bindEvents() {
       return;
     }
 
-    if (isTyping || !els.onboardingOverlay.hidden || state.spotlight.open || state.tidy.open) return;
+    if (isTyping || !els.editBookmarkOverlay.hidden || !els.onboardingOverlay.hidden || state.spotlight.open || state.tidy.open) return;
 
     if (e.key === '[' || ((e.metaKey || e.ctrlKey) && e.key === '\\')) {
       e.preventDefault();
@@ -2253,6 +2549,7 @@ function initCustomCursor() {
 
   const resolveCursorPill = (target) => {
     if (!target || !(target instanceof Element)) return null;
+    if (els.cardContextMenu && !els.cardContextMenu.hidden) return null;
     if (target.closest('input, textarea, select')) return null;
 
     const favBtn = target.closest('.card-fav-btn');
@@ -2266,6 +2563,12 @@ function initCustomCursor() {
     const actionBtn = target.closest('.card-action-btn');
     if (actionBtn) {
       const act = actionBtn.dataset.action;
+      if (act === 'toggle-blur') {
+        return {
+          label: actionBtn.classList.contains('is-active') ? '显示封面' : '隐藏封面',
+          tone: 'violet'
+        };
+      }
       if (act === 'recapture') return { label: '刷新封面', tone: 'blue' };
       if (act === 'copy') return { label: '复制链接', tone: 'teal' };
       if (act === 'move') return { label: '移动', tone: 'violet' };
@@ -2309,7 +2612,7 @@ function initCustomCursor() {
       if (text) return { label: text, tone: 'violet' };
     }
 
-    const dangerEl = target.closest('.btn-danger, .context-item.is-danger');
+    const dangerEl = target.closest('.btn-danger, .context-menu-item.is-danger');
     if (dangerEl) {
       const txt = dangerEl.textContent?.trim();
       return { label: txt && txt.length <= 6 ? txt : '移除', tone: 'rose' };
@@ -2380,6 +2683,7 @@ function initCustomCursor() {
     { passive: true }
   );
 
+  document.addEventListener('contextmenu', hidePill, { passive: true });
   document.addEventListener('mouseleave', hidePill, { passive: true });
   window.addEventListener('blur', hidePill, { passive: true });
   window.addEventListener('scroll', hidePill, { passive: true });
