@@ -39,15 +39,15 @@ export const ICONS = {
   </svg>`,
 
   glassSettings: `<svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path d="M10.3 3.4a1.8 1.8 0 0 1 3.4 0l.4 1.3c.5.15 1 .36 1.45.62l1.2-.65a1.8 1.8 0 0 1 2.4 2.4l-.65 1.2c.26.45.47.95.62 1.45l1.3.4a1.8 1.8 0 0 1 0 3.4l-1.3.4c-.15.5-.36 1-.62 1.45l.65 1.2a1.8 1.8 0 0 1-2.4 2.4l-1.2-.65c-.45.26-.95.47-1.45.62l-.4 1.3a1.8 1.8 0 0 1-3.4 0l-.4-1.3a7.1 7.1 0 0 1-1.45-.62l-1.2.65a1.8 1.8 0 0 1-2.4-2.4l.65-1.2a7.1 7.1 0 0 1-.62-1.45l-1.3-.4a1.8 1.8 0 0 1 0-3.4l1.3-.4c.15-.5.36-1 .62-1.45l-.65-1.2a1.8 1.8 0 0 1 2.4-2.4l1.2.65c.45-.26.95-.47 1.45-.62l.4-1.3Z" fill="url(#ng-slate)" fill-opacity="0.82"/>
+    <path d="M10.3 3.4a1.8 1.8 0 0 1 3.4 0l.4 1.3c.5.15 1 .36 1.45.62l1.2-.65a1.8 1.8 0 0 1 2.4 2.4l-.65 1.2c.26.45.47.95.62 1.45l1.3.4a1.8 1.8 0 0 1 0 3.4l-1.3.4c-.15.5-.36 1-.62 1.45l.65 1.2a1.8 1.8 0 0 1-2.4 2.4l-1.2-.65c-.45.26-.95.47-1.45.62l-.4 1.3a1.8 1.8 0 0 1-3.4 0l-.4-1.3a7.1 7.1 0 0 1-1.45-.62l-1.2.65a1.8 1.8 0 0 1-2.4-2.4l.65-1.2a7.1 7.1 0 0 1-.62-1.45l-1.3-.4a1.8 1.8 0 0 1 0-3.4l1.3-.4c.15-.5.36-1 .62-1.45l-.65-1.2a1.8 1.8 0 0 1 2.4-2.4l1.2.65c.45-.26.95-.47 1.45-.62l.4-1.3Z" fill="url(#ng-neutral)" fill-opacity="0.88"/>
     <circle cx="12" cy="12" r="5.6" fill="url(#ng-glass-pane)" stroke="url(#ng-glass-stroke)" stroke-width="1"/>
-    <circle cx="12" cy="12" r="2.2" fill="#FFFFFF" fill-opacity="0.8"/>
+    <circle cx="12" cy="12" r="2.2" fill="#FFFFFF" fill-opacity="0.82"/>
   </svg>`,
 
   // Semantic Nucleo Glass Folder Icons (for crisp recognition in collapsed rail)
   glassWork: `<svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path d="M8.5 6.5V5.2A1.7 1.7 0 0 1 10.2 3.5h3.6a1.7 1.7 0 0 1 1.7 1.7v1.3" stroke="url(#ng-cobalt)" stroke-width="2" stroke-linecap="round"/>
-    <rect x="4" y="6.2" width="16" height="12.6" rx="2.8" fill="url(#ng-cobalt)" fill-opacity="0.88"/>
+    <path d="M8.5 6.5V5.2A1.7 1.7 0 0 1 10.2 3.5h3.6a1.7 1.7 0 0 1 1.7 1.7v1.3" stroke="url(#ng-work)" stroke-width="2" stroke-linecap="round"/>
+    <rect x="4" y="6.2" width="16" height="12.6" rx="2.8" fill="url(#ng-work)" fill-opacity="0.92"/>
     <rect x="2.8" y="9.8" width="18.4" height="10.2" rx="2.6" fill="url(#ng-glass-pane)" stroke="url(#ng-glass-stroke)" stroke-width="1"/>
     <rect x="10.2" y="12.2" width="3.6" height="2" rx="1" fill="#FFFFFF" fill-opacity="0.72"/>
   </svg>`,

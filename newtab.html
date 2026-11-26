@@ -7,44 +7,52 @@
   <link rel="stylesheet" href="styles/folio.css" />
 </head>
 <body>
-  <!-- Shared SVG definitions for Nucleo Glass sidebar icons -->
+  <!-- Shared SVG definitions for Nucleo Glass icons using perceptually uniform OKLCH palette -->
   <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden;" aria-hidden="true">
     <defs>
       <linearGradient id="ng-cobalt" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#60A5FA" />
-        <stop offset="100%" stop-color="#1D4ED8" />
+        <stop offset="0%" stop-color="var(--ok-indigo-hi)" />
+        <stop offset="100%" stop-color="var(--ok-indigo-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-work" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-blue-hi)" />
+        <stop offset="100%" stop-color="var(--ok-blue-lo)" />
       </linearGradient>
       <linearGradient id="ng-slate" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#94A3B8" />
-        <stop offset="100%" stop-color="#475569" />
+        <stop offset="0%" stop-color="var(--ok-teal-hi)" />
+        <stop offset="100%" stop-color="var(--ok-teal-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-neutral" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-neutral-hi)" />
+        <stop offset="100%" stop-color="var(--ok-neutral-lo)" />
       </linearGradient>
       <linearGradient id="ng-amber" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#FBBF24" />
-        <stop offset="100%" stop-color="#D97706" />
+        <stop offset="0%" stop-color="var(--ok-amber-hi)" />
+        <stop offset="100%" stop-color="var(--ok-amber-lo)" />
       </linearGradient>
       <linearGradient id="ng-violet" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#A78BFA" />
-        <stop offset="100%" stop-color="#6D28D9" />
+        <stop offset="0%" stop-color="var(--ok-violet-hi)" />
+        <stop offset="100%" stop-color="var(--ok-violet-lo)" />
       </linearGradient>
       <linearGradient id="ng-emerald" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#34D399" />
-        <stop offset="100%" stop-color="#059669" />
+        <stop offset="0%" stop-color="var(--ok-emerald-hi)" />
+        <stop offset="100%" stop-color="var(--ok-emerald-lo)" />
       </linearGradient>
       <linearGradient id="ng-rose" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#FB7185" />
-        <stop offset="100%" stop-color="#E11D48" />
+        <stop offset="0%" stop-color="var(--ok-rose-hi)" />
+        <stop offset="100%" stop-color="var(--ok-rose-lo)" />
       </linearGradient>
       <linearGradient id="ng-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#38BDF8" />
-        <stop offset="100%" stop-color="#0284C7" />
+        <stop offset="0%" stop-color="var(--ok-cyan-hi)" />
+        <stop offset="100%" stop-color="var(--ok-cyan-lo)" />
       </linearGradient>
       <linearGradient id="ng-glass-pane" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="var(--glass-hi)" stop-opacity="0.76" />
-        <stop offset="100%" stop-color="var(--glass-lo)" stop-opacity="0.34" />
+        <stop offset="0%" stop-color="var(--glass-hi)" stop-opacity="0.74" />
+        <stop offset="100%" stop-color="var(--glass-lo)" stop-opacity="0.32" />
       </linearGradient>
       <linearGradient id="ng-glass-stroke" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.72" />
-        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.14" />
+        <stop offset="0%" stop-color="var(--glass-rim-hi)" stop-opacity="0.72" />
+        <stop offset="100%" stop-color="var(--glass-rim-lo)" stop-opacity="0.14" />
       </linearGradient>
     </defs>
   </svg>

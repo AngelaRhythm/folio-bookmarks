@@ -688,8 +688,8 @@ function getGridColumnCount() {
   const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
   const innerWidth = Math.max(220, els.galleryRoot.clientWidth - padX);
   const minCard = 220;
-  const colGap = 14;
-  return Math.max(1, Math.floor((innerWidth + colGap) / (minCard + colGap)));
+  const colGap = 16;
+  return Math.min(4, Math.max(1, Math.floor((innerWidth + colGap) / (minCard + colGap))));
 }
 
 function getGroupPreviewLimit() {
@@ -1794,10 +1794,99 @@ function bindEvents() {
   });
 }
 
+// --- Zero-Space Overlay Scrollbar Indicators (appear only while scrolling) ---
+function initOverlayScrollbars() {
+  const vBar = document.createElement('div');
+  vBar.className = 'folio-scrollbar';
+  vBar.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(vBar);
+
+  const hBar = document.createElement('div');
+  hBar.className = 'folio-scrollbar';
+  hBar.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(hBar);
+
+  let vHideTimer = null;
+  let hHideTimer = null;
+
+  function showVerticalThumb(scrollTop, scrollHeight, clientHeight, rect) {
+    if (scrollHeight <= clientHeight + 2) return;
+    const pad = 6;
+    const trackLen = Math.max(32, clientHeight - pad * 2);
+    const thumbLen = Math.max(30, (clientHeight / scrollHeight) * trackLen);
+    const ratio = scrollTop / (scrollHeight - clientHeight);
+    const top = rect.top + pad + ratio * (trackLen - thumbLen);
+    const left = rect.right - 7;
+
+    vBar.style.width = '4px';
+    vBar.style.height = `${thumbLen}px`;
+    vBar.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+    vBar.style.top = '0';
+    vBar.style.left = '0';
+    vBar.classList.add('is-visible');
+
+    clearTimeout(vHideTimer);
+    vHideTimer = setTimeout(() => vBar.classList.remove('is-visible'), 750);
+  }
+
+  function showHorizontalThumb(scrollLeft, scrollWidth, clientWidth, rect) {
+    if (scrollWidth <= clientWidth + 2) return;
+    const pad = 6;
+    const trackLen = Math.max(32, clientWidth - pad * 2);
+    const thumbLen = Math.max(36, (clientWidth / scrollWidth) * trackLen);
+    const ratio = scrollLeft / (scrollWidth - clientWidth);
+    const left = rect.left + pad + ratio * (trackLen - thumbLen);
+    const top = rect.bottom - 6;
+
+    hBar.style.height = '4px';
+    hBar.style.width = `${thumbLen}px`;
+    hBar.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+    hBar.style.top = '0';
+    hBar.style.left = '0';
+    hBar.classList.add('is-visible');
+
+    clearTimeout(hHideTimer);
+    hHideTimer = setTimeout(() => hBar.classList.remove('is-visible'), 750);
+  }
+
+  // Main window vertical scroll
+  window.addEventListener(
+    'scroll',
+    () => {
+      const doc = document.documentElement;
+      showVerticalThumb(window.scrollY, doc.scrollHeight, window.innerHeight, {
+        top: 0,
+        right: window.innerWidth
+      });
+    },
+    { passive: true }
+  );
+
+  // Any internal scrollable container (capture phase picks up scroll on nested elements)
+  document.addEventListener(
+    'scroll',
+    (e) => {
+      const target = e.target;
+      if (!target || target === document || target === document.documentElement || !(target instanceof HTMLElement)) {
+        return;
+      }
+      const rect = target.getBoundingClientRect();
+      if (target.scrollHeight > target.clientHeight + 2) {
+        showVerticalThumb(target.scrollTop, target.scrollHeight, target.clientHeight, rect);
+      }
+      if (target.scrollWidth > target.clientWidth + 2) {
+        showHorizontalThumb(target.scrollLeft, target.scrollWidth, target.clientWidth, rect);
+      }
+    },
+    { passive: true, capture: true }
+  );
+}
+
 // --- Bootstrap ---
 async function init() {
   state.prefs = await loadPreferences();
   bindEvents();
+  initOverlayScrollbars();
   applyTheme();
   applyLayoutPreferences();
 
