@@ -228,6 +228,10 @@ a {
   outline-offset: 2px;
 }
 
+html.is-gate-pending body {
+  visibility: hidden;
+}
+
 /* Lock scroll on <html> only — setting overflow:hidden on <body> turns <body> into a
  * scroll container and breaks position:sticky (.sidebar / .topbar / .settings-pane) when scrolled. */
 html.is-scroll-locked {
@@ -3274,6 +3278,47 @@ html.is-dragging-card * {
 
 .setting-switch[aria-checked="true"]::after {
   transform: translateX(16px);
+}
+
+.setting-switch.is-locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.setting-title-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.setting-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  font-weight: 540;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  color: var(--text-muted);
+  background-color: var(--bg-surface-subtle);
+  border: 0.5px solid var(--border-hairline);
+}
+
+.setting-inline-link {
+  padding: 0;
+  margin-left: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--accent);
+  background: none;
+  border: none;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.setting-inline-link:hover {
+  opacity: 0.78;
 }
 
 .setting-select {

@@ -62,12 +62,20 @@ async function getSettings() {
       'ttlDays',
       'autoCapture',
       'remoteCoverEnabled',
+      'launchOnNewTab',
+      'launchOnAction',
+      'launchOnStartup',
+      'launchOnShortcut',
       'excludedFolderIds'
     ]);
     return {
       ttlDays: typeof res.ttlDays === 'number' ? res.ttlDays : DEFAULT_REFRESH_DAYS,
       autoCapture: res.autoCapture !== false,
       remoteCoverEnabled: res.remoteCoverEnabled === true,
+      launchOnNewTab: res.launchOnNewTab !== false,
+      launchOnAction: res.launchOnAction !== false,
+      launchOnStartup: res.launchOnStartup === true,
+      launchOnShortcut: res.launchOnShortcut === true,
       excludedFolderIds: Array.isArray(res.excludedFolderIds) ? res.excludedFolderIds : null
     };
   } catch {
@@ -75,8 +83,104 @@ async function getSettings() {
       ttlDays: DEFAULT_REFRESH_DAYS,
       autoCapture: true,
       remoteCoverEnabled: false,
+      launchOnNewTab: true,
+      launchOnAction: true,
+      launchOnStartup: false,
+      launchOnShortcut: false,
       excludedFolderIds: null
     };
+  }
+}
+
+// --- Launch Mode Controller (Plan A: focus existing Folio tab in current window, or open a new one) ---
+async function findExistingFolioTab(tabs, folioPrefix, launchOnNewTab) {
+  const tabById = new Map(tabs.map((t) => [t.id, t]));
+
+  // 1) Exact match via MV3 getContexts: catches BOTH chrome://newtab/ overrides AND extension URLs
+  if (typeof chrome.runtime.getContexts === 'function') {
+    try {
+      const contexts = await chrome.runtime.getContexts({ contextTypes: ['TAB'] });
+      for (const ctx of contexts) {
+        if (
+          typeof ctx.tabId === 'number' &&
+          tabById.has(ctx.tabId) &&
+          typeof ctx.documentUrl === 'string' &&
+          ctx.documentUrl.startsWith(folioPrefix)
+        ) {
+          return tabById.get(ctx.tabId);
+        }
+      }
+    } catch {
+      // Fall through to URL heuristics
+    }
+  }
+
+  // 2) Fallback for discarded/unloaded tabs
+  return (
+    tabs.find((t) => {
+      const u = t.url || '';
+      const p = t.pendingUrl || '';
+      if (u.startsWith(folioPrefix) || p.startsWith(folioPrefix)) return true;
+      if (launchOnNewTab && (u === 'chrome://newtab/' || p === 'chrome://newtab/')) return true;
+      return false;
+    }) || null
+  );
+}
+
+async function openOrFocusFolioTab(source, targetWindowId = null) {
+  const folioPrefix = chrome.runtime.getURL('newtab.html');
+  const targetUrl = `${folioPrefix}?source=${encodeURIComponent(source)}`;
+  try {
+    const [{ launchOnNewTab }, tabs] = await Promise.all([
+      getSettings(),
+      chrome.tabs.query(targetWindowId != null ? { windowId: targetWindowId } : { currentWindow: true })
+    ]);
+    const existing = await findExistingFolioTab(tabs, folioPrefix, launchOnNewTab);
+    if (existing && typeof existing.id === 'number') {
+      await chrome.tabs.update(existing.id, { active: true });
+      if (existing.windowId != null) {
+        await chrome.windows.update(existing.windowId, { focused: true }).catch(() => {});
+      }
+      return;
+    }
+
+    // On browser startup, replace Chrome's initial blank/default NTP tab in place when possible
+    if (source === 'startup' && tabs.length === 1) {
+      const first = tabs[0];
+      const currentUrl = first.pendingUrl || first.url || '';
+      if (
+        currentUrl === 'chrome://newtab/' ||
+        currentUrl === 'chrome://new-tab-page/' ||
+        currentUrl === 'about:blank'
+      ) {
+        await chrome.tabs.update(first.id, { url: targetUrl, active: true });
+        return;
+      }
+    }
+
+    await chrome.tabs.create({
+      url: targetUrl,
+      active: true,
+      ...(targetWindowId != null ? { windowId: targetWindowId } : {})
+    });
+  } catch {
+    await chrome.tabs.create({ url: targetUrl, active: true }).catch(() => {});
+  }
+}
+
+async function syncActionState() {
+  if (!chrome.action) return;
+  try {
+    const { launchOnAction } = await getSettings();
+    if (launchOnAction) {
+      await chrome.action.enable();
+      await chrome.action.setTitle({ title: '打开 Folio' });
+    } else {
+      await chrome.action.disable();
+      await chrome.action.setTitle({ title: 'Folio（已在设置中关闭扩展图标启动）' });
+    }
+  } catch {
+    // Ignore transient action API failures
   }
 }
 
@@ -761,10 +865,32 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
     await chrome.alarms.clear(ALARM_PERIODIC_REFRESH);
     await chrome.alarms.clear(ALARM_QUEUE_RESUME);
   }
+  if (changes.launchOnAction) {
+    syncActionState();
+  }
   if (changes.ttlDays || changes.autoCapture || changes.remoteCoverEnabled) {
     syncPeriodicAlarm();
   }
 });
+
+// Toolbar icon click launch (Plan A: focus existing Folio tab or open new)
+if (chrome.action?.onClicked) {
+  chrome.action.onClicked.addListener(async (tab) => {
+    const { launchOnAction } = await getSettings();
+    if (!launchOnAction) return;
+    await openOrFocusFolioTab('action', tab?.windowId ?? null);
+  });
+}
+
+// Global keyboard shortcut launch (Alt+Shift+F / Option+Shift+F)
+if (chrome.commands?.onCommand) {
+  chrome.commands.onCommand.addListener(async (command) => {
+    if (command !== 'open-folio') return;
+    const { launchOnShortcut } = await getSettings();
+    if (!launchOnShortcut) return;
+    await openOrFocusFolioTab('shortcut');
+  });
+}
 
 // --- Message API for New Tab Gallery ---
 
@@ -816,6 +942,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function bootstrapServiceWorker(pruneOrphans = false) {
+  await syncActionState();
   await rebuildBookmarkIndex(pruneOrphans);
   const { remoteCoverEnabled } = await getSettings();
   if (!remoteCoverEnabled) {
@@ -834,8 +961,14 @@ chrome.runtime.onInstalled.addListener(() => {
   bootstrapServiceWorker(false);
 });
 
-chrome.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(async () => {
   bootstrapServiceWorker(true);
+  const { launchOnStartup } = await getSettings();
+  if (launchOnStartup) {
+    setTimeout(() => {
+      openOrFocusFolioTab('startup');
+    }, 120);
+  }
 });
 
 bootstrapServiceWorker(false);

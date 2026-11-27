@@ -31,11 +31,12 @@ Folio 是一个**零构建、纯原生 ES Modules** 的 Chrome Extension（Manif
 
 | 文件 | 运行环境 | 核心职责 |
 | :--- | :--- | :--- |
-| `manifest.json` | 扩展清单 | 声明 `newtab.html` 覆写、`src/background.js`（`type: "module"`）、最小必要权限 |
-| `newtab.html` | UI 线程 | 语义化页面骨架、共享 OKLCH Nucleo Glass SVG `<defs>` 渐变、弹窗与右键菜单 DOM |
+| `manifest.json` | 扩展清单 | 声明 `newtab.html` 覆写、工具栏 `action`、全局快捷键 `commands`、`src/background.js`（`type: "module"`）与最小必要权限 |
+| `newtab.html` | UI 线程 | 语义化页面骨架、早拦截脚本 `src/newtab-gate.js`、共享 OKLCH Nucleo Glass SVG `<defs>` 渐变、弹窗与右键菜单 DOM |
 | `styles/folio.css` | UI 线程 | 完整样式系统（OKLCH 浅/深双色 Token、布局、动效、悬浮滚动条、自定义指针样式） |
+| `src/newtab-gate.js` | UI 线程（`<head>`） | 新标签页启动方式闸门：当 `launchOnNewTab` 为 `false` 且非主动唤起时，首帧前隐藏页面并回退至 `chrome://new-tab-page/` |
 | `src/app.js` | UI 线程 | 前端状态管理、树模型解析、画廊渲染、实时联动、拖拽归类、Spotlight、设置、滚动条与自定义指针 |
-| `src/background.js` | Service Worker | 本地被动截屏、重定向追踪、可选 Plan A 远程补齐队列、长周期定时刷新、孤儿缓存清理 |
+| `src/background.js` | Service Worker | 多入口启动调度（扩展图标/启动首页/全局快捷键与方案 A 切回）、本地被动截屏、重定向追踪、可选 Plan A 远程补齐队列与孤儿缓存清理 |
 | `src/icons.js` | UI 线程 | 双轨 SVG 图标注册表（左侧栏 Nucleo Glass + 其余全部 Tabler Icons） |
 | `src/shared/chrome-bridge.js` | UI 线程 | `IS_EXTENSION` 适配层：扩展内走原生 `chrome.*`，HTTP 预览时无缝切换内存 Mock 树与 Canvas 封面 |
 | `src/shared/db.js` | UI & SW 共享 | IndexedDB（`folio_bookmark_gallery` / `thumbnails`）读写、统计与孤儿回收 |
@@ -55,6 +56,10 @@ Folio 是一个**零构建、纯原生 ES Modules** 的 Chrome Extension（Manif
 | `ttlDays` | `number` | `30` | 封面保鲜周期：`7`（每周）/ `30`（每月）/ `90`（每季度）/ `0`（仅手动） |
 | `autoCapture` | `boolean` | `true` | 是否启用「浏览时本地截屏」（以及远程模式下的自动巡检） |
 | `remoteCoverEnabled` | `boolean` | `false` | **是否显式开启「远程补齐封面」**。`false` 时严格禁止一切第三方请求 |
+| `launchOnNewTab` | `boolean` | `true` | 是否在新标签页自动展示 Folio（关闭时由 `src/newtab-gate.js` 回退至原生 `chrome://new-tab-page/`） |
+| `launchOnAction` | `boolean` | `true` | 是否允许点击浏览器工具栏扩展图标打开/切回 Folio（联动 `chrome.action.enable()/disable()`） |
+| `launchOnStartup` | `boolean` | `false` | 是否在 Chrome 冷启动（`chrome.runtime.onStartup`）时自动作为首页打开 Folio |
+| `launchOnShortcut` | `boolean` | `false` | 是否允许在任意网页通过全局快捷键（`Alt+Shift+F` / `⌥⇧F`）一键打开/切回 Folio |
 | `initialCapturePrompted` | `boolean` | `false` | 首次欢迎弹窗是否已展示过 |
 | `favoriteKeys` | `string[]` | `[]` | 顶部收藏条书签的 `normalizeUrl(url)` 列表（按收藏顺序） |
 | `blurredKeys` | `string[]` | `[]` | 手动开启高斯模糊隐藏封面的书签 `normalizeUrl(url)` 列表 |

@@ -419,6 +419,10 @@ export async function loadPreferences() {
     ttlDays: 30,
     autoCapture: true,
     remoteCoverEnabled: false,
+    launchOnNewTab: true,
+    launchOnAction: true,
+    launchOnStartup: false,
+    launchOnShortcut: false,
     initialCapturePrompted: false,
     favoriteKeys: [],
     blurredKeys: [],
@@ -443,6 +447,30 @@ export async function savePreferences(patch) {
   }
   const current = await loadPreferences();
   localStorage.setItem('folio_prefs', JSON.stringify({ ...current, ...patch }));
+}
+
+export async function getOpenShortcutLabel() {
+  const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || navigator.userAgent || '');
+  const fallback = isMac ? '⌥⇧F' : 'Alt+Shift+F';
+  if (IS_EXTENSION && chrome.commands?.getAll) {
+    try {
+      const commands = await chrome.commands.getAll();
+      const cmd = commands.find((c) => c.name === 'open-folio');
+      if (cmd && cmd.shortcut) return cmd.shortcut;
+      if (cmd && !cmd.shortcut) return '未设置';
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+export async function openExtensionShortcutsPage() {
+  if (IS_EXTENSION && chrome.tabs?.create) {
+    await chrome.tabs.create({ url: 'chrome://extensions/shortcuts', active: true });
+    return true;
+  }
+  return false;
 }
 
 export function subscribeRuntimeMessages(callback) {

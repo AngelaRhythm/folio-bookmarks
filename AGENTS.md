@@ -41,8 +41,9 @@ folio-bookmarks/
 ├── icons/                        # Extension PNG icons (16 / 32 / 48 / 128 px)
 ├── src/
 │   ├── app.js                    # UI controller: tree model, gallery, favorites, DnD, Spotlight, Settings, scrollbar, custom cursor
+│   ├── newtab-gate.js            # Early <head> launch gate: falls back to chrome://new-tab-page/ when launchOnNewTab is OFF
 │   ├── shockwave.js              # WebGL2 Shockwave Glow renderer triggered on Spotlight search activation
-│   ├── background.js             # MV3 Service Worker: local passive capture, opt-in Plan A remote queue, alarms, orphan pruning
+│   ├── background.js             # MV3 Service Worker: launch mode routing (action/startup/shortcut), local capture, opt-in remote queue, alarms
 │   ├── icons.js                  # Dual icon registry: Nucleo Glass (left sidebar) + Tabler Icons (all other controls)
 │   └── shared/
 │       ├── chrome-bridge.js      # Unified Chrome API / HTTP preview mock adapter + preferences load/save
@@ -63,6 +64,7 @@ folio-bookmarks/
 | Goal | Primary Files | Key Symbols / Sections |
 | :--- | :--- | :--- |
 | Change default preferences | `src/shared/chrome-bridge.js`, `src/app.js`, `src/background.js` | `loadPreferences()`, `state.prefs`, `getSettings()` |
+| Modify launch modes (newtab / action / startup / shortcut) | `manifest.json`, `src/newtab-gate.js`, `src/background.js`, `src/app.js` | `openOrFocusFolioTab()`, `findExistingFolioTab()`, `syncActionState()`, `getActiveLaunchModeCount()` |
 | Modify bookmark tree / folder flattening | `src/app.js`, `src/background.js` | `buildTreeModel()`, `collectBookmarkEntries()` |
 | Change card layout / columns / 2-row preview | `styles/folio.css`, `src/app.js` | `.card-grid`, `getGridColumnCount()`, `renderAllView()`, `createCardElement()` |
 | Modify Favorites quick rail | `src/app.js`, `styles/folio.css` | `syncFavoritesSection()`, `toggleFavoriteKey()`, `.favorites-rail` |
@@ -110,6 +112,7 @@ folio-bookmarks/
 ### 5.1 Syntax & Security Unit Check
 ```bash
 node --check src/app.js && \
+node --check src/newtab-gate.js && \
 node --check src/background.js && \
 node --check src/icons.js && \
 node --check src/shared/url.js && \

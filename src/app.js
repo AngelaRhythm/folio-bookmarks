@@ -21,8 +21,10 @@ import {
 import {
   IS_EXTENSION,
   getBookmarkTree,
+  getOpenShortcutLabel,
   loadPreferences,
   moveBookmark,
+  openExtensionShortcutsPage,
   removeBookmark,
   savePreferences,
   seedMockThumbnailsIfNeeded,
@@ -48,11 +50,16 @@ const state = {
     ttlDays: 30,
     autoCapture: true,
     remoteCoverEnabled: false,
+    launchOnNewTab: true,
+    launchOnAction: true,
+    launchOnStartup: false,
+    launchOnShortcut: false,
     initialCapturePrompted: false,
     favoriteKeys: [],
     blurredKeys: [],
     excludedFolderIds: null
   },
+  openShortcutLabel: '⌥⇧F',
   rootBarId: '1',
   topFolders: [],          // Top-level bookmark folders
   folderMap: new Map(),    // folderId -> folder node (with recursive items & children)
@@ -1221,7 +1228,9 @@ async function openTidyDrawer(defaultTab = 'settings') {
   suppressOverlayScrollbars(340);
   state.tidy.open = true;
   state.tidy.tab = defaultTab;
-  state.tidy.stats = await getStorageStats();
+  const [stats, shortcutLabel] = await Promise.all([getStorageStats(), getOpenShortcutLabel()]);
+  state.tidy.stats = stats;
+  state.openShortcutLabel = shortcutLabel;
   els.settingsPane.classList.add('is-open');
   els.settingsPane.setAttribute('aria-hidden', 'false');
   els.btnOpenTidy.classList.add('is-active');
@@ -1380,7 +1389,63 @@ function renderTidyContent() {
       `
       : '';
 
+  const launchModes = [
+    {
+      key: 'launchOnNewTab',
+      title: '新标签页打开',
+      desc: '新建标签页时自动展示 Folio'
+    },
+    {
+      key: 'launchOnAction',
+      title: '点击扩展图标',
+      desc: '点击工具栏图标打开或切回已开页面'
+    },
+    {
+      key: 'launchOnStartup',
+      title: '启动浏览器时',
+      desc: '启动 Chrome 时自动作为首页打开'
+    },
+    {
+      key: 'launchOnShortcut',
+      title: '全局快捷键',
+      desc: '在任意网页一键切回或打开 Folio',
+      shortcut: state.openShortcutLabel
+    }
+  ];
+
+  const enabledLaunchCount = launchModes.filter((m) => Boolean(state.prefs[m.key])).length;
+
+  const launchRowsHtml = launchModes
+    .map((m) => {
+      const checked = Boolean(state.prefs[m.key]);
+      const locked = checked && enabledLaunchCount <= 1;
+      const titleInner = m.shortcut
+        ? `<span class="setting-title-inline"><span class="settings-item-title">${m.title}</span><kbd class="setting-kbd">${escapeHtml(m.shortcut)}</kbd><button type="button" class="setting-inline-link" id="btn-edit-shortcut">改键</button></span>`
+        : `<span class="settings-item-title">${m.title}</span>`;
+      return `
+        <div class="settings-item-row">
+          <div class="settings-item-main">
+            ${titleInner}
+            <span class="settings-item-desc">${m.desc}</span>
+          </div>
+          <button type="button" class="setting-switch${locked ? ' is-locked' : ''}" role="switch" aria-checked="${checked ? 'true' : 'false'}" aria-disabled="${locked ? 'true' : 'false'}" data-launch-pref="${m.key}" aria-label="${m.title}"></button>
+        </div>
+      `;
+    })
+    .join('');
+
   container.innerHTML = `
+    <section class="settings-card">
+      <div class="settings-card-head">
+        <h3 class="settings-card-title">启动方式</h3>
+      </div>
+      <p class="settings-card-hint">可多选或全开，至少保留一项</p>
+
+      <div class="settings-subcard-list">
+        ${launchRowsHtml}
+      </div>
+    </section>
+
     <section class="settings-card">
       <div class="settings-card-head">
         <h3 class="settings-card-title">封面更新</h3>
@@ -2383,6 +2448,44 @@ function bindEvents() {
       }
       showToast(`已移除 ${ids.length} 条重复书签`);
       await refreshAllData();
+      return;
+    }
+
+    // 1b. Open Chrome extension shortcut configuration page
+    if (e.target.closest('#btn-edit-shortcut')) {
+      const opened = await openExtensionShortcutsPage();
+      if (!opened) {
+        showToast('请在 Chrome 中打开 chrome://extensions/shortcuts 修改');
+      }
+      return;
+    }
+
+    // 1c. Toggle launch modes (multi-select, enforce at least 1 active)
+    const launchSwitch = e.target.closest('[data-launch-pref]');
+    if (launchSwitch) {
+      const key = launchSwitch.dataset.launchPref;
+      const launchKeys = ['launchOnNewTab', 'launchOnAction', 'launchOnStartup', 'launchOnShortcut'];
+      if (!launchKeys.includes(key)) return;
+      const currentVal = Boolean(state.prefs[key]);
+      const activeCount = launchKeys.filter((k) => Boolean(state.prefs[k])).length;
+
+      if (currentVal && activeCount <= 1) {
+        showToast('至少保留一种启动方式，避免无法打开 Folio');
+        return;
+      }
+
+      const nextVal = !currentVal;
+      state.prefs[key] = nextVal;
+      await savePreferences({ [key]: nextVal });
+      renderTidyContent();
+
+      const feedback = {
+        launchOnNewTab: nextVal ? '已开启：新建标签页时展示 Folio' : '已关闭新标签页展示，下一次新开页签生效',
+        launchOnAction: nextVal ? '已开启：点击工具栏图标打开 Folio' : '已关闭扩展图标启动',
+        launchOnStartup: nextVal ? '已开启：启动浏览器时自动打开 Folio' : '已关闭启动浏览器自动打开',
+        launchOnShortcut: nextVal ? `已开启全局快捷键 (${state.openShortcutLabel})` : '已关闭全局快捷键打开'
+      };
+      showToast(feedback[key] || '已更新启动方式');
       return;
     }
 
