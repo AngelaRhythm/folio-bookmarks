@@ -226,8 +226,9 @@ a {
   outline-offset: 2px;
 }
 
-html.is-scroll-locked,
-body.is-scroll-locked {
+/* Lock scroll on <html> only — setting overflow:hidden on <body> turns <body> into a
+ * scroll container and breaks position:sticky (.sidebar / .topbar / .settings-pane) when scrolled. */
+html.is-scroll-locked {
   overflow: hidden;
   overscroll-behavior: none;
 }
@@ -241,8 +242,17 @@ body.is-scroll-locked {
 }
 
 .app-shell.is-spotlight-open {
+  /* Disabled per user preference so the gallery stays steady after shockwave finishes:
   filter: blur(5px) saturate(0.92);
   transform: scale(0.992);
+  */
+}
+
+/* Keep background razor-sharp and 1:1 aligned during the 1000ms optical wave distortion */
+.app-shell.is-spotlight-open.is-shockwave-active {
+  filter: url(#folio-shockwave-lens);
+  transform: none;
+  transition: none;
 }
 
 /* --- Ultra-Slim Collapsible Sidebar (symmetrical liquid collapse & expand) --- */
@@ -897,7 +907,7 @@ body.is-scroll-locked {
 
 /* Batch Progress Hairline Banner */
 .batch-banner {
-  margin: 0 32px 10px;
+  margin: 16px 32px 8px;
   padding: 10px 14px;
   border-radius: var(--radius-md);
   background-color: var(--bg-surface);
@@ -1881,7 +1891,35 @@ body.is-scroll-locked {
   to { opacity: 1; }
 }
 
+/* Shockwave Glow WebGL2 Canvas (strictly clipped to gallery workspace, behind Spotlight dialog) */
+.shockwave-canvas {
+  position: fixed;
+  z-index: 1;
+  pointer-events: none;
+  display: block;
+}
+
+[data-theme="dark"] .shockwave-canvas.is-overlay-only {
+  mix-blend-mode: screen;
+}
+
+/* Subtle 0.5px card hairline glint as the shockwave sweeps past */
+.card-stage.is-sw-glint {
+  border-color: color-mix(in oklch, var(--border-hairline), var(--sw-color, var(--accent)) calc(var(--sw-glint, 0) * 100%));
+  box-shadow: var(--shadow-card),
+              0 0 0 0.5px color-mix(in oklch, transparent, var(--sw-color, var(--accent)) calc(var(--sw-glint, 0) * 85%));
+}
+
+/* Rotating 900ms Metallic Edge Shimmer on Spotlight Open */
+@property --sw-edge-angle {
+  syntax: "<angle>";
+  initial-value: -60deg;
+  inherits: false;
+}
+
 .spotlight-dialog {
+  position: relative;
+  z-index: 2;
   width: 100%;
   max-width: 600px;
   border-radius: var(--radius-lg);
@@ -1890,6 +1928,74 @@ body.is-scroll-locked {
   box-shadow: var(--shadow-popover);
   overflow: hidden;
   animation: dialogPop 180ms var(--ease-out);
+}
+
+.spotlight-dialog::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    conic-gradient(
+      from var(--sw-edge-angle),
+      transparent 0deg 275deg,
+      rgba(255, 255, 255, 0.88) 325deg,
+      transparent 360deg
+    ),
+    linear-gradient(
+      120deg,
+      rgb(238 240 243),
+      rgb(196 202 210) 28%,
+      rgb(241 243 245) 50%,
+      rgb(188 195 204) 74%,
+      rgb(233 236 239)
+    );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+
+[data-theme="dark"] .spotlight-dialog::after {
+  background:
+    conic-gradient(
+      from var(--sw-edge-angle),
+      transparent 0deg 275deg,
+      rgba(220, 228, 255, 0.86) 325deg,
+      transparent 360deg
+    ),
+    linear-gradient(
+      120deg,
+      rgb(86 92 106),
+      rgb(56 60 68) 30%,
+      rgb(104 110 128) 52%,
+      rgb(51 55 61) 78%,
+      rgb(78 84 96)
+    );
+}
+
+.spotlight-dialog.is-shimmering::after {
+  animation: spotlightEdgeSweep 1150ms var(--ease-out) forwards;
+}
+
+@keyframes spotlightEdgeSweep {
+  0% {
+    --sw-edge-angle: -60deg;
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.75;
+  }
+  72% {
+    opacity: 0.62;
+  }
+  100% {
+    --sw-edge-angle: 300deg;
+    opacity: 0;
+  }
 }
 
 @keyframes dialogPop {
@@ -2634,7 +2740,7 @@ body.is-scroll-locked {
   }
 
   .batch-banner {
-    margin: 0 24px 10px;
+    margin: 16px 24px 8px;
   }
 
   .subfolder-bar {
@@ -2665,7 +2771,7 @@ body.is-scroll-locked {
   }
 
   .batch-banner {
-    margin: 0 20px 10px;
+    margin: 16px 20px 8px;
   }
 
   .subfolder-bar {
@@ -2757,7 +2863,7 @@ body.is-scroll-locked {
   }
 
   .batch-banner {
-    margin: 0 16px 10px;
+    margin: 12px 16px 8px;
     flex-direction: column;
     align-items: stretch;
   }

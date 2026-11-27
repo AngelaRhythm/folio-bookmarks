@@ -1,6 +1,7 @@
 // Folio — Minimalist Visual Bookmark Gallery App Controller
 
 import { ICONS } from './icons.js';
+import { stopSearchShockwave, triggerSearchShockwave, warmShockwaveEngine } from './shockwave.js';
 import {
   getDisplayHost,
   getDomainHue,
@@ -932,7 +933,15 @@ function syncScrollLock() {
       (els.editBookmarkOverlay && !els.editBookmarkOverlay.hidden)
   );
   document.documentElement.classList.toggle('is-scroll-locked', locked);
-  document.body.classList.toggle('is-scroll-locked', locked);
+}
+
+function triggerSpotlightMetallicEdge() {
+  const dialog = els.spotlightOverlay?.querySelector('.spotlight-dialog');
+  if (!dialog) return;
+  dialog.classList.remove('is-shimmering');
+  // Force reflow so rapid re-triggers cleanly restart the 900ms metallic sweep
+  void dialog.offsetWidth;
+  dialog.classList.add('is-shimmering');
 }
 
 function openSpotlight(initialChar = '') {
@@ -944,10 +953,16 @@ function openSpotlight(initialChar = '') {
   els.spotlightInput.value = initialChar;
   els.spotlightInput.focus();
   updateSpotlightResults(initialChar);
+  triggerSpotlightMetallicEdge();
+  // Synchronous 0ms launch — full-viewport wave distortion + prismatic shockwave
+  triggerSearchShockwave({ hostOverlay: els.spotlightOverlay });
 }
 
 function closeSpotlight() {
   if (!state.spotlight.open) return;
+  stopSearchShockwave();
+  const dialog = els.spotlightOverlay?.querySelector('.spotlight-dialog');
+  if (dialog) dialog.classList.remove('is-shimmering');
   state.spotlight.open = false;
   els.spotlightOverlay.hidden = true;
   els.spotlightOverlay.setAttribute('aria-hidden', 'true');
@@ -2730,6 +2745,12 @@ async function init() {
     renderBatchBanner();
   } else {
     maybeShowOnboardingPrompt();
+  }
+  // Pre-warm WebGL2 shader & optical lens map on idle so first Spotlight trigger has 0ms delay
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(() => warmShockwaveEngine(), { timeout: 600 });
+  } else {
+    setTimeout(() => warmShockwaveEngine(), 120);
   }
 }
 

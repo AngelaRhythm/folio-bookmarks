@@ -41,6 +41,7 @@ folio-bookmarks/
 ├── icons/                        # Extension PNG icons (16 / 32 / 48 / 128 px)
 ├── src/
 │   ├── app.js                    # UI controller: tree model, gallery, favorites, DnD, Spotlight, Settings, scrollbar, custom cursor
+│   ├── shockwave.js              # WebGL2 Shockwave Glow renderer triggered on Spotlight search activation
 │   ├── background.js             # MV3 Service Worker: local passive capture, opt-in Plan A remote queue, alarms, orphan pruning
 │   ├── icons.js                  # Dual icon registry: Nucleo Glass (left sidebar) + Tabler Icons (all other controls)
 │   └── shared/
