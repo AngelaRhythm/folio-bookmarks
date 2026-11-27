@@ -74,7 +74,7 @@
   --text-sm: 0.8125rem;     /* 13px — secondary metadata, domains, counts */
 
   /* Layout geometry */
-  --sidebar-width: 228px;
+  --sidebar-width: 248px;
   --sidebar-rail-width: 60px;
   --topbar-height: 64px;
   --radius-sm: 8px;
@@ -158,6 +158,7 @@ body {
 /* Hide all native scrollbars globally & disable elastic overscroll bounce */
 html,
 body,
+.sidebar-scroll,
 .sidebar-nav,
 .favorites-rail,
 .drawer-body,
@@ -171,6 +172,7 @@ body,
 
 html::-webkit-scrollbar,
 body::-webkit-scrollbar,
+.sidebar-scroll::-webkit-scrollbar,
 .sidebar-nav::-webkit-scrollbar,
 .favorites-rail::-webkit-scrollbar,
 .drawer-body::-webkit-scrollbar,
@@ -342,31 +344,72 @@ html.is-scroll-locked {
   color: var(--text-primary);
 }
 
-.sidebar-nav {
+.sidebar-pinned {
+  position: relative;
+  flex-shrink: 0;
+  padding: 10px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background-color: var(--bg-sidebar);
+  z-index: 2;
+}
+
+.sidebar-pinned::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 0;
+  border-top: 0.5px solid var(--border-strong);
+  opacity: 0.65;
+  pointer-events: none;
+  transition: left 240ms var(--ease-out), right 240ms var(--ease-out);
+}
+
+[data-theme="dark"] .sidebar-pinned::after {
+  border-top-color: var(--border-hairline);
+  opacity: 1;
+}
+
+.sidebar.is-collapsed .sidebar-pinned::after {
+  left: 14px;
+  right: 14px;
+}
+
+.sidebar-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 10px 10px 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-nav {
+  flex: 0 0 auto;
+  padding: 12px 10px 14px;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.nav-divider {
-  height: 0.5px;
-  background-color: var(--border-hairline);
-  margin: 8px 6px;
-  transition: margin 240ms var(--ease-out);
-}
-
-.sidebar.is-collapsed .nav-divider {
-  margin: 8px 8px;
-}
-
 .nav-item-wrap {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   width: 100%;
+}
+
+.nav-item-wrap:has(.nav-folder-card.is-active) {
+  z-index: 4;
+}
+
+.nav-item-wrap:hover,
+.nav-item-wrap:has(.nav-folder-card.is-drop-target) {
+  z-index: 20;
 }
 
 .nav-item {
@@ -510,13 +553,474 @@ html.is-scroll-locked {
   pointer-events: none;
 }
 
-/* Interactive Isometric Background Boxes at Sidebar Bottom (Aceternity UI inspired) */
+/* --- Tactile Folder Pocket Cards (Left Sidebar Folders, excluding "全部书签") --- */
+.nav-folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 0 0 8px;
+  transition: gap 240ms var(--ease-out), padding 240ms var(--ease-out);
+}
+
+.nav-folder-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  overflow: visible;
+  border-radius: 14px;
+  background-color: transparent;
+  border: 0.5px solid transparent;
+  box-shadow: none;
+  transition: background-color 260ms var(--ease-out),
+              border-color 240ms var(--ease-out),
+              box-shadow 260ms var(--ease-out);
+}
+
+.nav-folder-card:hover {
+  background-color: transparent;
+}
+
+/* Selected expanded tray: borderless soft ambient backdrop behind fanned preview cards */
+.nav-folder-card.is-active {
+  background:
+    radial-gradient(ellipse 92% 72% at 50% 18%, oklch(0.7 0.14 var(--folder-hue, 266) / 0.14), transparent 74%),
+    var(--bg-surface-subtle);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+[data-theme="dark"] .nav-folder-card.is-active {
+  background:
+    radial-gradient(ellipse 92% 72% at 50% 18%, oklch(0.72 0.15 var(--folder-hue, 266) / 0.18), transparent 74%),
+    oklch(0.195 0 0);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.nav-folder-card.is-drop-target {
+  background:
+    radial-gradient(ellipse 92% 72% at 50% 16%, var(--accent-soft), transparent 74%),
+    var(--bg-surface-subtle);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 0.5px var(--accent);
+}
+
+/* Exact pixel height transition (0px <-> 62px) so when switching A -> B:
+ * h_A(t) + h_B(t) = 62px constant on every frame -> 0px jitter for all items below! */
+.folder-peek-slot {
+  position: relative;
+  width: 100%;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+  transition: height 280ms var(--ease-out), opacity 200ms var(--ease-out);
+}
+
+.nav-folder-card.is-active .folder-peek-slot {
+  height: 62px;
+}
+
+.folder-peek-inner,
+.folder-peek-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Fanned miniature preview cards anchored to slot bottom (-14px tucked behind 68px pocket face) */
+.folder-mini-card {
+  position: absolute;
+  bottom: -14px;
+  width: 96px;
+  height: 58px;
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: var(--bg-surface);
+  border: 0.5px solid var(--border-strong);
+  box-shadow: 0 6px 16px oklch(0 0 0 / 0.12), 0 1px 3px oklch(0 0 0 / 0.08);
+  opacity: 0;
+  transform: translate3d(0, 56px, 0) scale(0.84) rotate(0deg);
+  transform-origin: center bottom;
+  will-change: transform, opacity;
+  transition: transform 320ms cubic-bezier(0.34, 1.38, 0.64, 1),
+              opacity 180ms var(--ease-out);
+}
+
+[data-theme="dark"] .folder-mini-card {
+  background-color: oklch(0.24 0 0);
+  border-color: oklch(1 0 0 / 0.16);
+  box-shadow: 0 8px 20px oklch(0 0 0 / 0.45), 0 0 0 0.5px oklch(1 0 0 / 0.08);
+}
+
+.folder-mini-card.is-left {
+  z-index: 1;
+}
+
+.folder-mini-card.is-right {
+  z-index: 1;
+  transition-delay: 42ms, 28ms;
+}
+
+/* Unselected Hover: crisp unobstructed micro-peek floating in front of adjacent cards */
+.nav-folder-card:not(.is-active):hover .folder-mini-card.is-left {
+  opacity: 0.96;
+  transform: translate3d(-17px, 28px, 0) scale(0.92) rotate(-5.5deg);
+}
+
+.nav-folder-card:not(.is-active):hover .folder-mini-card.is-right {
+  opacity: 0.98;
+  transform: translate3d(17px, 25px, 0) scale(0.92) rotate(5deg);
+}
+
+/* Drag-Over: welcoming deeper pocket lift */
+.nav-folder-card:not(.is-active).is-drop-target .folder-mini-card.is-left {
+  opacity: 0.98;
+  transform: translate3d(-18px, 22px, 0) scale(0.94) rotate(-6deg);
+}
+
+.nav-folder-card:not(.is-active).is-drop-target .folder-mini-card.is-right {
+  opacity: 1;
+  transform: translate3d(18px, 19px, 0) scale(0.94) rotate(5.5deg);
+}
+
+/* Selected (Red Box): full spring fan-out inside the 62px expanded peek slot */
+.nav-folder-card.is-active .folder-mini-card.is-left {
+  opacity: 1;
+  transform: translate3d(-22px, -8px, 0) scale(1) rotate(-7.5deg);
+}
+
+.nav-folder-card.is-active .folder-mini-card.is-right {
+  opacity: 1;
+  transform: translate3d(22px, -12px, 0) scale(1) rotate(5.5deg);
+}
+
+.folder-mini-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  opacity: 0;
+  transition: opacity 220ms var(--ease-out);
+}
+
+.folder-mini-img.is-loaded {
+  opacity: 1;
+}
+
+/* Architectural wireframe fallback (used for excluded folders, blurred bookmarks, or uncaptured sites) */
+.folder-mini-wire {
+  position: absolute;
+  inset: 0;
+  padding: 7px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background:
+    radial-gradient(circle at 80% 16%, oklch(0.72 0.08 var(--folder-hue, 266) / 0.14), transparent 64%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-surface-subtle) 100%);
+}
+
+[data-theme="dark"] .folder-mini-wire {
+  background:
+    radial-gradient(circle at 80% 16%, oklch(0.74 0.1 var(--folder-hue, 266) / 0.16), transparent 64%),
+    linear-gradient(180deg, oklch(0.26 0 0) 0%, oklch(0.21 0 0) 100%);
+}
+
+.folder-mini-wire-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.folder-mini-wire-dots {
+  display: flex;
+  gap: 2.5px;
+}
+
+.folder-mini-wire-dots i {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background-color: var(--border-strong);
+}
+
+.folder-mini-wire-pill {
+  width: 20px;
+  height: 3px;
+  border-radius: 99px;
+  background-color: oklch(0.65 0.09 var(--folder-hue, 266) / 0.45);
+}
+
+.folder-mini-wire-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3.5px;
+  margin-top: 2px;
+}
+
+.folder-mini-wire-lines span {
+  display: block;
+  height: 3px;
+  border-radius: 99px;
+  background-color: var(--border-hairline);
+}
+
+.folder-mini-wire-lines span:first-child {
+  width: 72%;
+  background-color: var(--border-strong);
+}
+
+.folder-mini-wire-lines span:nth-child(2) {
+  width: 52%;
+}
+
+.folder-mini-wire-lines span:nth-child(3) {
+  width: 84%;
+  opacity: 0.65;
+}
+
+/* Foreground Folder Pocket Face (68px plush height with generous top/bottom padding) */
+.folder-pocket-face {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 68px;
+  height: 68px;
+  padding: 14px 13px 14px 14px;
+  border-radius: 14px;
+  background-color: var(--bg-surface);
+  border: 0.5px solid var(--border-hairline);
+  box-shadow: var(--shadow-card);
+  transition: background-color var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out),
+              box-shadow 240ms var(--ease-out),
+              min-height 240ms var(--ease-out),
+              height 240ms var(--ease-out),
+              padding 240ms var(--ease-out),
+              gap 240ms var(--ease-out);
+}
+
+[data-theme="dark"] .folder-pocket-face {
+  background-color: oklch(0.185 0 0);
+  border-color: oklch(0.285 0 0);
+}
+
+.nav-folder-card:hover .folder-pocket-face {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.nav-folder-card.is-active .folder-pocket-face {
+  background-color: var(--bg-surface);
+  border-color: var(--border-strong);
+  box-shadow: 0 -6px 14px oklch(0 0 0 / 0.06), var(--shadow-card);
+}
+
+[data-theme="dark"] .nav-folder-card.is-active .folder-pocket-face {
+  background-color: oklch(0.22 0 0);
+  border-color: oklch(0.36 0 0);
+  box-shadow: 0 -8px 18px oklch(0 0 0 / 0.44), 0 0 0 0.5px oklch(1 0 0 / 0.06);
+}
+
+.nav-folder-card.is-drop-target .folder-pocket-face {
+  border-color: var(--accent);
+  background-color: var(--bg-surface);
+}
+
+.nav-folder-card .nav-item-icon {
+  width: 32px;
+  height: 32px;
+  /* Resting: crisp high-contrast monochrome; blooms into full OKLCH color on hover & active */
+  filter: grayscale(1) contrast(1.22) brightness(0.82);
+  transition: width 220ms var(--ease-out),
+              height 220ms var(--ease-out),
+              color var(--t-fast) var(--ease-out),
+              filter 220ms var(--ease-out);
+}
+
+[data-theme="dark"] .nav-folder-card .nav-item-icon {
+  filter: grayscale(1) contrast(1.14) brightness(1.08);
+}
+
+.nav-folder-card:hover .nav-item-icon,
+.nav-folder-card.is-active .nav-item-icon,
+.nav-folder-card.is-drop-target .nav-item-icon,
+[data-theme="dark"] .nav-folder-card:hover .nav-item-icon,
+[data-theme="dark"] .nav-folder-card.is-active .nav-item-icon,
+[data-theme="dark"] .nav-folder-card.is-drop-target .nav-item-icon {
+  filter: none;
+}
+
+.nav-folder-card .nav-item-icon svg {
+  width: 30px;
+  height: 30px;
+  transition: width 220ms var(--ease-out), height 220ms var(--ease-out);
+}
+
+.folder-pocket-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 1;
+  transition: opacity 160ms var(--ease-out);
+}
+
+.nav-folder-card .nav-label {
+  font-size: 0.9rem;
+  font-weight: 560;
+  line-height: 1.3;
+  color: var(--text-primary);
+  transition: color var(--t-fast) var(--ease-out), opacity 160ms var(--ease-out);
+}
+
+/* Hover & Active Title Color — uses the EXACT same OKLCH token as the folder's icon gradient */
+.nav-folder-card:hover .nav-label {
+  color: var(--folder-color-light, var(--accent));
+}
+
+.nav-folder-card.is-active .nav-label {
+  color: var(--folder-color-light, var(--accent));
+  font-weight: 620;
+}
+
+[data-theme="dark"] .nav-folder-card:hover .nav-label,
+[data-theme="dark"] .nav-folder-card.is-active .nav-label {
+  color: var(--folder-color-dark, var(--accent));
+}
+
+.folder-pocket-count {
+  font-size: 0.75rem;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.folder-pocket-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  background-color: var(--bg-surface-subtle);
+  border: 0.5px solid var(--border-hairline);
+  opacity: 1;
+  transition: transform 220ms var(--ease-out),
+              color var(--t-fast) var(--ease-out),
+              background-color var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out),
+              opacity 160ms var(--ease-out),
+              width 220ms var(--ease-out);
+}
+
+.nav-folder-card:hover .folder-pocket-arrow {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.nav-folder-card.is-active .folder-pocket-arrow {
+  color: var(--text-primary);
+  background-color: var(--bg-active);
+  border-color: var(--border-strong);
+  transform: translateX(1px);
+}
+
+.folder-pocket-arrow.is-sub-toggle.is-open {
+  transform: rotate(90deg);
+}
+
+/* Collapsed 60px Icon Rail Adaptation for Folder Pocket Cards */
+.sidebar.is-collapsed .nav-folder-list {
+  gap: 2px;
+  padding-top: 0;
+}
+
+.sidebar.is-collapsed .nav-folder-card {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  border-radius: var(--radius-sm);
+}
+
+.sidebar.is-collapsed .folder-peek-slot {
+  height: 0 !important;
+  opacity: 0;
+}
+
+.sidebar.is-collapsed .folder-mini-card {
+  opacity: 0 !important;
+}
+
+.sidebar.is-collapsed .folder-pocket-face {
+  min-height: 38px;
+  height: 38px;
+  padding: 0 11px;
+  gap: 0;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.sidebar.is-collapsed .nav-folder-card .nav-item-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.sidebar.is-collapsed .nav-folder-card .nav-item-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.sidebar.is-collapsed .nav-folder-card:hover .folder-pocket-face {
+  background-color: var(--bg-hover);
+}
+
+.sidebar.is-collapsed .nav-folder-card.is-active .folder-pocket-face {
+  background-color: var(--bg-active);
+  box-shadow: inset 0 0 0 0.5px var(--border-hairline);
+}
+
+.sidebar.is-collapsed .folder-pocket-meta,
+.sidebar.is-collapsed .folder-pocket-arrow {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar.is-collapsed .folder-pocket-arrow {
+  width: 0;
+  border-width: 0;
+}
+
+/* Interactive Isometric Background Boxes at Sidebar Bottom (pins to bottom when short; flows below folders when tall) */
 .sidebar-boxes {
   position: relative;
   width: 100%;
-  height: 24vh;
-  min-height: 128px;
-  max-height: 220px;
+  height: 8.5vh;
+  min-height: 56px;
+  max-height: 84px;
+  margin-top: auto;
   flex-shrink: 0;
   overflow: hidden;
   opacity: 1;
@@ -1437,7 +1941,97 @@ html.is-scroll-locked {
 }
 
 .bookmark-card.is-dragging {
-  opacity: 0.45;
+  opacity: 0.42;
+}
+
+/* Lock custom grabbing hand cursor globally while dragging a bookmark card */
+html.is-dragging-card,
+html.is-dragging-card * {
+  cursor: var(--folio-cursor-grabbing, grabbing) !important;
+  user-select: none !important;
+}
+
+/* Custom Opaque Miniature Drag Preview (floats cleanly to the right of cursor, 4px solid border, 0 transparency) */
+.folio-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 9998;
+  width: 144px;
+  height: 90px;
+  border-radius: 10px;
+  border: 4px solid var(--bg-surface);
+  background-color: var(--bg-surface);
+  overflow: hidden;
+  opacity: 1;
+  pointer-events: none;
+  box-shadow: 0 14px 32px oklch(0 0 0 / 0.22), 0 0 0 0.5px oklch(0 0 0 / 0.12);
+  will-change: transform;
+  contain: layout style;
+}
+
+[data-theme="dark"] .folio-drag-ghost {
+  border-color: oklch(0.34 0 0);
+  background-color: var(--bg-surface);
+  box-shadow: 0 16px 36px oklch(0 0 0 / 0.64), 0 0 0 0.5px oklch(1 0 0 / 0.14);
+}
+
+.folio-drag-ghost-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  opacity: 1;
+}
+
+.folio-drag-ghost.is-cover-blurred .folio-drag-ghost-img,
+.folio-drag-ghost.is-cover-blurred .folio-drag-ghost-placeholder {
+  filter: blur(18px) saturate(0.75);
+  transform: scale(1.24);
+}
+
+.folio-drag-ghost-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 10px;
+  background:
+    radial-gradient(circle at 22% 18%, oklch(0.72 0.085 var(--card-hue, 260) / 0.14), transparent 60%),
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-surface-subtle) 100%);
+}
+
+.folio-drag-ghost-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background-color: var(--bg-surface);
+  border: 0.5px solid var(--border-hairline);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.folio-drag-ghost-icon img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+
+.folio-drag-ghost-host {
+  max-width: 100%;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-stage {
@@ -1703,24 +2297,35 @@ html.is-scroll-locked {
 .card-meta {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
+  gap: 8px;
   padding: 0 2px;
   min-width: 0;
+}
+
+.card-meta-leading {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .card-favicon {
   width: 16px;
   height: 16px;
-  margin-top: 3px;
   border-radius: 3px;
-  flex-shrink: 0;
   object-fit: contain;
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
 }
 
 .card-favicon-fallback {
   width: 16px;
   height: 16px;
-  margin-top: 3px;
   border-radius: 4px;
   background-color: var(--bg-surface-subtle);
   border: 0.5px solid var(--border-hairline);
@@ -1730,13 +2335,42 @@ html.is-scroll-locked {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
-  flex-shrink: 0;
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
+}
+
+.card-drag-handle {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  opacity: 0;
+  transform: scale(0.75);
+  transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+
+.bookmark-card:hover .card-favicon,
+.bookmark-card:hover .card-favicon-fallback {
+  opacity: 0;
+  transform: scale(0.75);
+}
+
+.bookmark-card:hover .card-drag-handle {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.bookmark-card:hover .card-drag-handle:hover {
+  color: var(--text-primary);
 }
 
 .card-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
   min-width: 0;
   flex: 1;
 }
@@ -1753,11 +2387,31 @@ html.is-scroll-locked {
   min-width: 0;
   font-size: var(--text-body);
   font-weight: 510;
+  line-height: 1.3;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   transition: color var(--t-fast) var(--ease-out);
+}
+
+.card-sub {
+  font-size: var(--text-sm);
+  line-height: 1.25;
+  margin-top: 1px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Subfolder section heading inside continuous scrollable folder view */
+.subfolder-section-heading {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text-secondary);
 }
 
 .card-new-tag {
@@ -1774,14 +2428,6 @@ html.is-scroll-locked {
 
 .bookmark-card:hover .card-title {
   color: var(--accent);
-}
-
-.card-sub {
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Empty State */

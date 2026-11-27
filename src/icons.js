@@ -147,6 +147,16 @@ export const ICONS = {
     <path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/>
   </svg>`,
 
+  // Tabler: grip-vertical (6-dot drag handle)
+  gripVertical: `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <circle cx="9" cy="6" r="1.5"/>
+    <circle cx="9" cy="12" r="1.5"/>
+    <circle cx="9" cy="18" r="1.5"/>
+    <circle cx="15" cy="6" r="1.5"/>
+    <circle cx="15" cy="12" r="1.5"/>
+    <circle cx="15" cy="18" r="1.5"/>
+  </svg>`,
+
   // Tabler: eye
   eye: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>

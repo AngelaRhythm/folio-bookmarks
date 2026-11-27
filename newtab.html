@@ -72,14 +72,20 @@
         </button>
       </div>
 
-      <nav class="sidebar-nav" id="sidebar-nav" aria-label="文件夹目录">
-        <!-- Populated dynamically -->
-      </nav>
+      <!-- Pinned top navigation ("全部书签" / "未归类") stays fixed above the divider -->
+      <div class="sidebar-pinned" id="sidebar-pinned" aria-label="快捷入口"></div>
 
-      <!-- Interactive Isometric Background Boxes (Aceternity UI style) -->
-      <div id="sidebar-bg-boxes" class="sidebar-boxes" aria-hidden="true">
-        <div id="sidebar-boxes-grid" class="sidebar-boxes-grid"></div>
-        <div class="sidebar-boxes-fade" aria-hidden="true"></div>
+      <!-- Only folder cards & trailing decorative boxes scroll below the divider -->
+      <div class="sidebar-scroll" id="sidebar-scroll">
+        <nav class="sidebar-nav" id="sidebar-nav" aria-label="文件夹目录">
+          <!-- Populated dynamically -->
+        </nav>
+
+        <!-- Interactive Isometric Background Boxes (pins to bottom when short; flows naturally below folders when tall) -->
+        <div id="sidebar-bg-boxes" class="sidebar-boxes" aria-hidden="true">
+          <div id="sidebar-boxes-grid" class="sidebar-boxes-grid"></div>
+          <div class="sidebar-boxes-fade" aria-hidden="true"></div>
+        </div>
       </div>
     </aside>
 

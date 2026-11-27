@@ -78,6 +78,8 @@ const state = {
 const els = {
   app: document.getElementById('app'),
   sidebar: document.getElementById('sidebar'),
+  sidebarPinned: document.getElementById('sidebar-pinned'),
+  sidebarScroll: document.getElementById('sidebar-scroll'),
   sidebarBackdrop: document.getElementById('sidebar-backdrop'),
   sidebarNav: document.getElementById('sidebar-nav'),
   brandHome: document.getElementById('brand-home'),
@@ -144,17 +146,43 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getSidebarFolderIcon(title, isActive) {
+// Single source of truth for folder icon + exact OKLCH palette token (so title color & icon gradient always match 1:1)
+function getFolderVisualMeta(title, isActive = false) {
   const t = (title || '').toLowerCase();
-  if (t.includes('公司') || t.includes('工作') || t.includes('work') || t.includes('company')) return ICONS.glassWork;
-  if (t.includes('论坛') || t.includes('博客') || t.includes('阅读') || t.includes('blog') || t.includes('forum')) return ICONS.glassForum;
-  if (t.includes('视觉') || t.includes('灵感') || t.includes('设计') || t.includes('design') || t.includes('ui')) return ICONS.glassVisual;
-  if (t.includes('个站') || t.includes('作品') || t.includes('site') || t.includes('web')) return ICONS.glassGlobe;
-  if (t.includes('工具') || t.includes('效率') || t.includes('tool')) return ICONS.glassTools;
-  if (t.includes('code') || t.includes('开发') || t.includes('前端') || t.includes('dev')) return ICONS.glassCode;
-  if (t.includes('规范') || t.includes('文档') || t.includes('spec') || t.includes('doc')) return ICONS.glassSpec;
-  if (t.includes('ai') || t.includes('大模型') || t.includes('智能')) return ICONS.glassAi;
-  return isActive ? ICONS.glassFolderActive : ICONS.glassFolder;
+  if (t.includes('公司') || t.includes('工作') || t.includes('work') || t.includes('company')) {
+    return { icon: ICONS.glassWork, hue: 242, colorLight: 'var(--ok-blue-lo)', colorDark: 'var(--ok-blue-hi)' };
+  }
+  if (t.includes('论坛') || t.includes('博客') || t.includes('阅读') || t.includes('blog') || t.includes('forum')) {
+    return { icon: ICONS.glassForum, hue: 206, colorLight: 'var(--ok-cyan-lo)', colorDark: 'var(--ok-cyan-hi)' };
+  }
+  if (t.includes('视觉') || t.includes('灵感') || t.includes('设计') || t.includes('design') || t.includes('ui')) {
+    return { icon: ICONS.glassVisual, hue: 8, colorLight: 'var(--ok-rose-lo)', colorDark: 'var(--ok-rose-hi)' };
+  }
+  if (t.includes('个站') || t.includes('作品') || t.includes('site') || t.includes('web')) {
+    return { icon: ICONS.glassGlobe, hue: 156, colorLight: 'var(--ok-emerald-lo)', colorDark: 'var(--ok-emerald-hi)' };
+  }
+  if (t.includes('工具') || t.includes('效率') || t.includes('tool')) {
+    return { icon: ICONS.glassTools, hue: 68, colorLight: 'var(--ok-amber-lo)', colorDark: 'var(--ok-amber-hi)' };
+  }
+  if (t.includes('code') || t.includes('开发') || t.includes('前端') || t.includes('dev')) {
+    return { icon: ICONS.glassCode, hue: 268, colorLight: 'var(--ok-indigo-lo)', colorDark: 'var(--ok-indigo-hi)' };
+  }
+  if (t.includes('规范') || t.includes('文档') || t.includes('spec') || t.includes('doc')) {
+    return { icon: ICONS.glassSpec, hue: 182, colorLight: 'var(--ok-teal-lo)', colorDark: 'var(--ok-teal-hi)' };
+  }
+  if (t.includes('ai') || t.includes('大模型') || t.includes('智能')) {
+    return { icon: ICONS.glassAi, hue: 304, colorLight: 'var(--ok-violet-lo)', colorDark: 'var(--ok-violet-hi)' };
+  }
+  return {
+    icon: isActive ? ICONS.glassFolderActive : ICONS.glassFolder,
+    hue: isActive ? 268 : 182,
+    colorLight: 'var(--ok-indigo-lo)',
+    colorDark: 'var(--ok-indigo-hi)'
+  };
+}
+
+function getSidebarFolderIcon(title, isActive) {
+  return getFolderVisualMeta(title, isActive).icon;
 }
 
 // --- Lazy Thumbnail Loader (IntersectionObserver + IndexedDB) ---
@@ -382,11 +410,88 @@ function updateSegmentedControl(container, activeSelector) {
   }
 }
 
-// --- Sidebar Rendering ---
-function renderSidebar() {
-  const frag = document.createDocumentFragment();
+// --- Sidebar Rendering (Tactile Folder Pocket Cards for folders; "全部书签" kept flat) ---
+function pickFolderPeekKeys(folder) {
+  if (!folder) return [null, null];
+  const excludedSet = new Set(state.prefs.excludedFolderIds || []);
+  if (excludedSet.has(folder.id)) return [null, null];
 
-  // "All Bookmarks" item
+  const eligible = [];
+  const seen = new Set();
+  for (const bm of folder.allBookmarks || []) {
+    if (!bm || seen.has(bm.key)) continue;
+    if (isBookmarkExcludedFromCover(bm) || isBlurredKey(bm.key)) continue;
+    seen.add(bm.key);
+    eligible.push(bm);
+  }
+
+  // Prefer bookmarks with cached local covers so the fanned preview cards look rich
+  const withThumb = eligible.filter((bm) => state.thumbMeta.has(bm.key));
+  const picks = withThumb.slice(0, 2).map((bm) => bm.key);
+  while (picks.length < 2) picks.push(null);
+  return picks;
+}
+
+function buildMiniPeekCardHtml(sideClass, thumbKey) {
+  const keyAttr = thumbKey ? ` data-folder-thumb-key="${escapeHtml(thumbKey)}"` : '';
+  const imgHtml = thumbKey ? `<img class="folder-mini-img" alt="" decoding="async" />` : '';
+  return `
+    <div class="folder-mini-card ${sideClass}"${keyAttr}>
+      <div class="folder-mini-wire">
+        <div class="folder-mini-wire-head">
+          <span class="folder-mini-wire-dots"><i></i><i></i></span>
+          <span class="folder-mini-wire-pill"></span>
+        </div>
+        <div class="folder-mini-wire-lines">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+      ${imgHtml}
+    </div>
+  `;
+}
+
+async function hydrateSidebarFolderThumbs() {
+  const slots = els.sidebarNav?.querySelectorAll('.folder-mini-card[data-folder-thumb-key]');
+  if (!slots || slots.length === 0) return;
+  for (const card of slots) {
+    const key = card.dataset.folderThumbKey;
+    if (!key || state.excludedKeys.has(key) || isBlurredKey(key) || !state.thumbMeta.has(key)) continue;
+    const objUrl = await resolveObjectUrl(key);
+    if (!objUrl || !card.isConnected) continue;
+    const img = card.querySelector('.folder-mini-img');
+    if (img && img.src !== objUrl) {
+      img.src = objUrl;
+      img.classList.add('is-loaded');
+    }
+  }
+}
+
+// Smoothly sync active folder state in place so CSS grid-template-rows & spring fan-out animate!
+function syncSidebarActiveState() {
+  const items = els.sidebar?.querySelectorAll('.nav-item[data-folder-id]');
+  if (!items) return;
+  for (const item of items) {
+    const fid = item.dataset.folderId;
+    const isActive = state.selectedFolderId === fid;
+    item.classList.toggle('is-active', isActive);
+    if (fid !== 'all' && fid !== 'loose') {
+      const folder = state.folderMap.get(fid);
+      const iconEl = item.querySelector('.nav-item-icon');
+      if (folder && iconEl) {
+        iconEl.innerHTML = getSidebarFolderIcon(folder.title, isActive);
+      }
+    }
+  }
+}
+
+function renderSidebar() {
+  const prevScrollTop = els.sidebarScroll ? els.sidebarScroll.scrollTop : els.sidebarNav.scrollTop;
+
+  // 1) Pinned top section ("全部书签" & optional "未归类") — stays fixed above the divider while scrolling
+  const pinnedFrag = document.createDocumentFragment();
   const allBtn = document.createElement('button');
   allBtn.type = 'button';
   allBtn.className = `nav-item${state.selectedFolderId === 'all' ? ' is-active' : ''}`;
@@ -397,9 +502,8 @@ function renderSidebar() {
     <span class="nav-label">全部书签</span>
     <span class="nav-count">${state.allBookmarks.length}</span>
   `;
-  frag.appendChild(allBtn);
+  pinnedFrag.appendChild(allBtn);
 
-  // Loose root bookmarks if present
   if (state.looseBookmarks.length > 0) {
     const looseBtn = document.createElement('button');
     looseBtn.type = 'button';
@@ -412,15 +516,19 @@ function renderSidebar() {
       <span class="nav-label">未归类</span>
       <span class="nav-count">${state.looseBookmarks.length}</span>
     `;
-    frag.appendChild(looseBtn);
+    pinnedFrag.appendChild(looseBtn);
   }
 
-  const divider = document.createElement('div');
-  divider.className = 'nav-divider';
-  frag.appendChild(divider);
+  if (els.sidebarPinned) {
+    els.sidebarPinned.innerHTML = '';
+    els.sidebarPinned.appendChild(pinnedFrag);
+  }
 
-  // Recursive folder tree renderer
-  function createFolderRow(folder) {
+  // 2) Scrollable folder pocket list below the divider
+  const frag = document.createDocumentFragment();
+
+  // Nested subfolder row renderer (compact indented items under an expanded parent folder)
+  function createSubfolderRow(folder) {
     const wrap = document.createElement('div');
     wrap.className = 'nav-item-wrap';
 
@@ -452,7 +560,7 @@ function renderSidebar() {
       const childrenBox = document.createElement('div');
       childrenBox.className = 'nav-children';
       for (const sub of folder.subfolders) {
-        childrenBox.appendChild(createFolderRow(sub));
+        childrenBox.appendChild(createSubfolderRow(sub));
       }
       wrap.appendChild(childrenBox);
     }
@@ -460,12 +568,75 @@ function renderSidebar() {
     return wrap;
   }
 
+  // Top-level Tactile Folder Pocket Card renderer
+  const folderList = document.createElement('div');
+  folderList.className = 'nav-folder-list';
+
   for (const folder of state.topFolders) {
-    frag.appendChild(createFolderRow(folder));
+    const wrap = document.createElement('div');
+    wrap.className = 'nav-item-wrap';
+
+    const hasChildren = folder.subfolders.length > 0;
+    const isExpanded = state.expandedSidebarFolders.has(folder.id);
+    const isActive = state.selectedFolderId === folder.id;
+    const visual = getFolderVisualMeta(folder.title, isActive);
+    const [leftKey, rightKey] = pickFolderPeekKeys(folder);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `nav-item nav-folder-card${isActive ? ' is-active' : ''}`;
+    btn.dataset.folderId = folder.id;
+    btn.dataset.dropFolderId = folder.id;
+    btn.dataset.tooltip = `${folder.title} (${folder.totalCount})`;
+    btn.style.setProperty('--folder-hue', String(visual.hue));
+    btn.style.setProperty('--folder-color-light', visual.colorLight);
+    btn.style.setProperty('--folder-color-dark', visual.colorDark);
+
+    const arrowAttrs = hasChildren
+      ? `class="folder-pocket-arrow is-sub-toggle${isExpanded ? ' is-open' : ''}" data-toggle-expand="${escapeHtml(folder.id)}" role="button" aria-label="展开子文件夹"`
+      : `class="folder-pocket-arrow" aria-hidden="true"`;
+
+    btn.innerHTML = `
+      <div class="folder-peek-slot" aria-hidden="true">
+        <div class="folder-peek-inner">
+          <div class="folder-peek-stage">
+            ${buildMiniPeekCardHtml('is-left', leftKey)}
+            ${buildMiniPeekCardHtml('is-right', rightKey)}
+          </div>
+        </div>
+      </div>
+      <div class="folder-pocket-face">
+        <span class="nav-item-icon">${getSidebarFolderIcon(folder.title, isActive)}</span>
+        <span class="folder-pocket-meta">
+          <span class="nav-label">${escapeHtml(folder.title)}</span>
+          <span class="folder-pocket-count">${folder.totalCount} 项</span>
+        </span>
+        <span ${arrowAttrs}>${ICONS.chevron}</span>
+      </div>
+    `;
+
+    wrap.appendChild(btn);
+
+    if (hasChildren && isExpanded) {
+      const childrenBox = document.createElement('div');
+      childrenBox.className = 'nav-children';
+      for (const sub of folder.subfolders) {
+        childrenBox.appendChild(createSubfolderRow(sub));
+      }
+      wrap.appendChild(childrenBox);
+    }
+
+    folderList.appendChild(wrap);
   }
 
+  frag.appendChild(folderList);
   els.sidebarNav.innerHTML = '';
   els.sidebarNav.appendChild(frag);
+  if (prevScrollTop > 0) {
+    if (els.sidebarScroll) els.sidebarScroll.scrollTop = prevScrollTop;
+    else els.sidebarNav.scrollTop = prevScrollTop;
+  }
+  hydrateSidebarFolderThumbs();
 }
 
 function isBlurredKey(key) {
@@ -495,6 +666,9 @@ async function toggleBlurKey(key) {
     btn.setAttribute('aria-label', blurred ? '显示封面' : '隐藏封面');
     btn.innerHTML = blurred ? ICONS.eyeOff : ICONS.eye;
   });
+
+  // Never let a newly blurred bookmark remain visible in sidebar folder pocket mini-cards
+  renderSidebar();
 }
 
 function isFavoriteKey(key) {
@@ -608,7 +782,6 @@ function createCardElement(bm, index) {
   card.className = `bookmark-card${isBlurred ? ' is-cover-blurred' : ''}`;
   card.style.setProperty('--stagger-i', String(Math.min(index, 12)));
   card.style.setProperty('--card-hue', String(getDomainHue(bm.url)));
-  card.draggable = true;
   card.dataset.bookmarkId = bm.id;
   card.dataset.key = bm.key;
 
@@ -630,7 +803,7 @@ function createCardElement(bm, index) {
 
   card.innerHTML = `
     <div class="card-stage">
-      <a href="${escapeHtml(bm.url)}" class="card-link" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(bm.title)}">
+      <a href="${escapeHtml(bm.url)}" class="card-link" draggable="false" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(bm.title)}">
         <div class="card-placeholder">
           <div class="placeholder-chrome" aria-hidden="true">
             <span class="placeholder-dot"></span>
@@ -640,7 +813,7 @@ function createCardElement(bm, index) {
           <div class="placeholder-icon-wrap">${placeholderFaviconHtml}</div>
           <span class="placeholder-host">${escapeHtml(bm.host)}</span>
         </div>
-        ${hideCover ? '' : `<img class="card-thumb" data-thumb-key="${escapeHtml(bm.key)}" alt="" decoding="async" />`}
+        ${hideCover ? '' : `<img class="card-thumb" data-thumb-key="${escapeHtml(bm.key)}" draggable="false" alt="" decoding="async" />`}
         <div class="card-blur-veil" aria-hidden="true">${ICONS.eyeOff}</div>
       </a>
       <div class="card-actions">
@@ -651,8 +824,11 @@ function createCardElement(bm, index) {
       </div>
       <button type="button" class="card-fav-btn${isFav ? ' is-favorited' : ''}" data-action="favorite" data-id="${escapeHtml(bm.id)}" data-key="${escapeHtml(bm.key)}" aria-label="${isFav ? '取消收藏' : '加入顶部收藏'}" aria-pressed="${isFav ? 'true' : 'false'}">${isFav ? ICONS.starFilled : ICONS.star}</button>
     </div>
-    <a href="${escapeHtml(bm.url)}" class="card-meta" target="_blank" rel="noopener noreferrer">
-      ${faviconSmallHtml}
+    <a href="${escapeHtml(bm.url)}" class="card-meta" draggable="false" target="_blank" rel="noopener noreferrer">
+      <span class="card-meta-leading" aria-hidden="true">
+        ${faviconSmallHtml}
+        <span class="card-drag-handle">${ICONS.gripVertical}</span>
+      </span>
       <div class="card-text">
         <div class="card-title-row">
           <span class="card-title">${escapeHtml(bm.title)}</span>
@@ -673,46 +849,10 @@ function createCardElement(bm, index) {
 }
 
 // --- Main Gallery View Rendering ---
-function getCurrentScopeBookmarks() {
-  if (state.selectedFolderId === 'all') {
-    return state.allBookmarks;
-  }
-  if (state.selectedFolderId === 'loose') {
-    return state.looseBookmarks;
-  }
-  const folder = state.folderMap.get(state.selectedFolderId);
-  if (!folder) return [];
-  if (state.activeSubfolderId !== 'all') {
-    const sub = state.folderMap.get(state.activeSubfolderId);
-    return sub ? sub.allBookmarks : folder.allBookmarks;
-  }
-  return folder.allBookmarks;
-}
-
 function renderSubfolderBar() {
-  if (state.selectedFolderId === 'all' || state.selectedFolderId === 'loose') {
-    els.subfolderBar.hidden = true;
-    els.subfolderBar.innerHTML = '';
-    return;
-  }
-  const folder = state.folderMap.get(state.selectedFolderId);
-  if (!folder || folder.subfolders.length === 0) {
-    els.subfolderBar.hidden = true;
-    els.subfolderBar.innerHTML = '';
-    return;
-  }
-
-  els.subfolderBar.hidden = false;
-  const tabs = [
-    { id: 'all', label: `全部 (${folder.totalCount})` },
-    ...folder.subfolders.map((sub) => ({ id: sub.id, label: `${sub.title} (${sub.totalCount})` }))
-  ];
-
-  els.subfolderBar.innerHTML = tabs
-    .map(
-      (t) => `<button type="button" class="subfolder-tab${state.activeSubfolderId === t.id ? ' is-active' : ''}" data-subfolder-id="${escapeHtml(t.id)}">${escapeHtml(t.label)}</button>`
-    )
-    .join('');
+  // Subfolders are now rendered inline as continuous scrollable sections inside the folder view
+  els.subfolderBar.hidden = true;
+  els.subfolderBar.innerHTML = '';
 }
 
 function getGridColumnCount() {
@@ -815,12 +955,10 @@ function renderGallery() {
     return;
   }
 
-  // View 2: Single Folder View
-  const items = [...getCurrentScopeBookmarks()];
-  const folderName =
-    state.selectedFolderId === 'loose'
-      ? '未归类书签'
-      : state.folderMap.get(state.selectedFolderId)?.title || '书签';
+  // View 2: Single Folder View (all direct bookmarks + nested subfolders rendered as continuous scrollable sections)
+  const selectedFolder = state.selectedFolderId === 'loose' ? null : state.folderMap.get(state.selectedFolderId);
+  const items = selectedFolder ? selectedFolder.allBookmarks : state.looseBookmarks;
+  const folderName = state.selectedFolderId === 'loose' ? '未归类书签' : selectedFolder?.title || '书签';
   updateFooterVisibility();
 
   const folderHeader = document.createElement('div');
@@ -832,12 +970,59 @@ function renderGallery() {
   root.appendChild(folderHeader);
 
   if (items.length === 0) {
-    root.innerHTML = `
-      <div class="empty-state">
-        <h2 class="empty-title">该文件夹暂时为空</h2>
-        <p class="empty-desc">你可以直接从其他分组拖动书签卡片到左侧这个文件夹，或在 Chrome 书签栏中收藏新网页。</p>
-      </div>
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.innerHTML = `
+      <h2 class="empty-title">该文件夹暂时为空</h2>
+      <p class="empty-desc">你可以直接从其他分组拖动书签卡片到左侧这个文件夹，或在 Chrome 书签栏中收藏新网页。</p>
     `;
+    root.appendChild(empty);
+    return;
+  }
+
+  // If this folder has nested subfolders, show direct items first followed by each subfolder section
+  if (selectedFolder && selectedFolder.subfolders.length > 0) {
+    const frag = document.createDocumentFragment();
+    let cardOffset = 0;
+
+    if (selectedFolder.directBookmarks.length > 0) {
+      const directGrid = document.createElement('div');
+      directGrid.className = 'card-grid';
+      for (const bm of selectedFolder.directBookmarks) {
+        directGrid.appendChild(createCardElement(bm, cardOffset++));
+      }
+      frag.appendChild(directGrid);
+    }
+
+    const walkSubfolders = (subs, prefixParts = []) => {
+      for (const sub of subs) {
+        const labelParts = [...prefixParts, sub.title];
+        if (sub.directBookmarks.length > 0) {
+          const section = document.createElement('section');
+          section.className = 'gallery-section';
+          section.innerHTML = `
+            <div class="gallery-section-header">
+              <div class="section-heading-group">
+                <h2 class="subfolder-section-heading">${escapeHtml(labelParts.join(' / '))}</h2>
+                <span class="section-count">${sub.directBookmarks.length}</span>
+              </div>
+            </div>
+            <div class="card-grid"></div>
+          `;
+          const subGrid = section.querySelector('.card-grid');
+          for (const bm of sub.directBookmarks) {
+            subGrid.appendChild(createCardElement(bm, cardOffset++));
+          }
+          frag.appendChild(section);
+        }
+        if (sub.subfolders.length > 0) {
+          walkSubfolders(sub.subfolders, labelParts);
+        }
+      }
+    };
+
+    walkSubfolders(selectedFolder.subfolders);
+    root.appendChild(frag);
     return;
   }
 
@@ -1567,7 +1752,7 @@ function bindEvents() {
     e.preventDefault();
     state.selectedFolderId = 'all';
     state.activeSubfolderId = 'all';
-    renderSidebar();
+    syncSidebarActiveState();
     renderGallery();
   });
 
@@ -1590,8 +1775,8 @@ function bindEvents() {
   });
   els.sidebarBackdrop.addEventListener('click', closeMobileSidebar);
 
-  // Sidebar navigation clicks
-  els.sidebarNav.addEventListener('click', (e) => {
+  // Sidebar navigation clicks (covers both pinned top items & scrollable folder cards)
+  els.sidebar.addEventListener('click', (e) => {
     const toggleEl = e.target.closest('[data-toggle-expand]');
     if (toggleEl) {
       e.stopPropagation();
@@ -1607,9 +1792,14 @@ function bindEvents() {
 
     const item = e.target.closest('.nav-item[data-folder-id]');
     if (!item) return;
+    if (state.selectedFolderId === item.dataset.folderId) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      closeMobileSidebar();
+      return;
+    }
     state.selectedFolderId = item.dataset.folderId;
     state.activeSubfolderId = 'all';
-    renderSidebar();
+    syncSidebarActiveState();
     renderGallery();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     closeMobileSidebar();
@@ -1637,51 +1827,181 @@ function bindEvents() {
   els.sidebar.addEventListener('mouseleave', hideTooltip);
   els.sidebar.addEventListener('click', hideTooltip);
 
-  // Drag & Drop Bookmark Cards directly onto Sidebar Folders
+  // Pointer-Event Drag & Drop Bookmark Cards directly onto Sidebar Folders
+  // Eliminates Chrome's translucent OS drag ghost (zero double-cover!) and unlocks a custom hardware grabbing cursor.
+  let dragGhostEl = null;
+  let dragCandidate = null; // { card, bm, pointerId, startX, startY, active }
+  let activeDropTarget = null;
+  let suppressCardClickUntil = 0;
+
+  const positionDragGhost = (x, y) => {
+    if (!dragGhostEl) return;
+    const ghostW = 144;
+    const ghostH = 90;
+    const tx = Math.min(window.innerWidth - ghostW - 10, Math.max(8, x + 22));
+    const ty = Math.min(window.innerHeight - ghostH - 10, Math.max(8, y - 28));
+    dragGhostEl.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+  };
+
+  const clearDropTarget = () => {
+    if (activeDropTarget) {
+      activeDropTarget.classList.remove('is-drop-target');
+      activeDropTarget = null;
+    }
+  };
+
+  const finishPointerDrag = () => {
+    if (dragGhostEl) {
+      dragGhostEl.remove();
+      dragGhostEl = null;
+    }
+    if (dragCandidate?.card) {
+      dragCandidate.card.classList.remove('is-dragging');
+    }
+    clearDropTarget();
+    document.documentElement.classList.remove('is-dragging-card');
+    state.dragBookmarkId = null;
+    dragCandidate = null;
+  };
+
+  const createDragGhostForCard = (card, bm) => {
+    if (dragGhostEl) dragGhostEl.remove();
+    const ghost = document.createElement('div');
+    ghost.id = 'folio-drag-ghost';
+    ghost.className = `folio-drag-ghost${card.classList.contains('is-cover-blurred') ? ' is-cover-blurred' : ''}`;
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.style.setProperty('--card-hue', String(getDomainHue(bm?.url || '')));
+
+    const loadedThumb = card.querySelector('img.card-thumb.is-loaded');
+    if (loadedThumb && loadedThumb.src) {
+      const img = document.createElement('img');
+      img.className = 'folio-drag-ghost-img';
+      img.src = loadedThumb.src;
+      img.alt = '';
+      ghost.appendChild(img);
+    } else {
+      const favUrl = bm ? getFaviconUrl(bm.url, 32) : '';
+      const initial = escapeHtml(((bm?.host || bm?.title || '?')[0] || '?').toUpperCase());
+      ghost.innerHTML = `
+        <div class="folio-drag-ghost-placeholder">
+          <div class="folio-drag-ghost-icon">${favUrl ? `<img src="${escapeHtml(favUrl)}" alt="" />` : initial}</div>
+          <span class="folio-drag-ghost-host">${escapeHtml(bm?.host || '')}</span>
+        </div>
+      `;
+    }
+
+    if (card.classList.contains('is-cover-blurred')) {
+      const veil = document.createElement('div');
+      veil.className = 'card-blur-veil';
+      veil.style.opacity = '1';
+      veil.innerHTML = ICONS.eyeOff;
+      ghost.appendChild(veil);
+    }
+
+    document.body.appendChild(ghost);
+    dragGhostEl = ghost;
+  };
+
+  // Prevent any native HTML5 image/link drag ghost inside the gallery
   els.galleryRoot.addEventListener('dragstart', (e) => {
+    if (e.target.closest('.bookmark-card')) {
+      e.preventDefault();
+    }
+  });
+
+  els.galleryRoot.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (e.pointerType === 'touch') return;
+    if (e.target.closest('button, [data-action]')) return;
     const card = e.target.closest('.bookmark-card[data-bookmark-id]');
     if (!card) return;
-    state.dragBookmarkId = card.dataset.bookmarkId;
-    card.classList.add('is-dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', state.dragBookmarkId);
+    const bm = state.allBookmarks.find((b) => b.id === card.dataset.bookmarkId);
+    if (!bm) return;
+    dragCandidate = {
+      card,
+      bm,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false
+    };
   });
 
-  els.galleryRoot.addEventListener('dragend', () => {
-    document.querySelectorAll('.bookmark-card.is-dragging').forEach((el) => el.classList.remove('is-dragging'));
-    document.querySelectorAll('.nav-item.is-drop-target').forEach((el) => el.classList.remove('is-drop-target'));
-    state.dragBookmarkId = null;
+  window.addEventListener(
+    'pointermove',
+    (e) => {
+      if (!dragCandidate || e.pointerId !== dragCandidate.pointerId) return;
+      if (!dragCandidate.active) {
+        if (Math.hypot(e.clientX - dragCandidate.startX, e.clientY - dragCandidate.startY) < 6) {
+          return;
+        }
+        dragCandidate.active = true;
+        state.dragBookmarkId = dragCandidate.bm.id;
+        dragCandidate.card.classList.add('is-dragging');
+        document.documentElement.classList.add('is-dragging-card');
+        document.getElementById('folio-cursor-pill')?.classList.remove('is-visible', 'is-pressed');
+        closeCardContextMenu();
+        closeMovePopover();
+        createDragGhostForCard(dragCandidate.card, dragCandidate.bm);
+      }
+
+      positionDragGhost(e.clientX, e.clientY);
+
+      // Only run DOM hit-testing when pointer is over the sidebar region (saves per-pixel hit-tests over gallery)
+      const sidebarRight = els.sidebar ? els.sidebar.offsetWidth + 8 : 260;
+      const dropEl =
+        e.clientX <= sidebarRight
+          ? document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.nav-item[data-drop-folder-id]') || null
+          : null;
+      if (dropEl !== activeDropTarget) {
+        clearDropTarget();
+        if (dropEl) {
+          dropEl.classList.add('is-drop-target');
+          activeDropTarget = dropEl;
+        }
+      }
+    },
+    { passive: true }
+  );
+
+  window.addEventListener('pointerup', async (e) => {
+    if (!dragCandidate || e.pointerId !== dragCandidate.pointerId) return;
+    const wasActive = dragCandidate.active;
+    const bmId = dragCandidate.bm.id;
+    const dropEl = activeDropTarget;
+    finishPointerDrag();
+
+    if (wasActive) {
+      suppressCardClickUntil = performance.now() + 220;
+      if (dropEl) {
+        const destFolderId = dropEl.dataset.dropFolderId;
+        await moveBookmark(bmId, { parentId: destFolderId });
+        const folderTitle = state.folderMap.get(destFolderId)?.title || '目标文件夹';
+        showToast(`已移动至「${folderTitle}」并同步至 Chrome`);
+        if (!IS_EXTENSION) await refreshAllData();
+      }
+    }
   });
 
-  els.sidebarNav.addEventListener('dragover', (e) => {
-    const target = e.target.closest('.nav-item[data-drop-folder-id]');
-    if (!target || !state.dragBookmarkId) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    document.querySelectorAll('.nav-item.is-drop-target').forEach((el) => {
-      if (el !== target) el.classList.remove('is-drop-target');
-    });
-    target.classList.add('is-drop-target');
+  window.addEventListener('pointercancel', finishPointerDrag);
+  window.addEventListener('blur', finishPointerDrag);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && dragCandidate?.active) {
+      finishPointerDrag();
+    }
   });
 
-  els.sidebarNav.addEventListener('dragleave', (e) => {
-    const target = e.target.closest('.nav-item[data-drop-folder-id]');
-    if (target) target.classList.remove('is-drop-target');
-  });
-
-  els.sidebarNav.addEventListener('drop', async (e) => {
-    const target = e.target.closest('.nav-item[data-drop-folder-id]');
-    if (!target || !state.dragBookmarkId) return;
-    e.preventDefault();
-    target.classList.remove('is-drop-target');
-    const destFolderId = target.dataset.dropFolderId;
-    const bmId = state.dragBookmarkId;
-    state.dragBookmarkId = null;
-    await moveBookmark(bmId, { parentId: destFolderId });
-    const folderTitle = state.folderMap.get(destFolderId)?.title || '目标文件夹';
-    showToast(`已移动至「${folderTitle}」并同步至 Chrome`);
-    if (!IS_EXTENSION) await refreshAllData();
-  });
+  // Swallow the trailing click on card links right after completing a drag gesture
+  els.galleryRoot.addEventListener(
+    'click',
+    (e) => {
+      if (performance.now() < suppressCardClickUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+    true
+  );
 
   // Subfolder tabs
   els.subfolderBar.addEventListener('click', (e) => {
@@ -2109,6 +2429,7 @@ function bindEvents() {
       rebuildExcludedKeySet();
       await savePreferences({ excludedFolderIds: state.prefs.excludedFolderIds });
       const prevY = window.scrollY;
+      renderSidebar();
       renderTidyContent();
       renderGallery();
       if (prevY > 0) requestAnimationFrame(() => window.scrollTo(0, prevY));
@@ -2127,6 +2448,7 @@ function bindEvents() {
       rebuildExcludedKeySet();
       await savePreferences({ excludedFolderIds: state.prefs.excludedFolderIds });
       const prevY = window.scrollY;
+      renderSidebar();
       renderTidyContent();
       renderGallery();
       if (prevY > 0) requestAnimationFrame(() => window.scrollTo(0, prevY));
@@ -2170,6 +2492,7 @@ function bindEvents() {
       state.tidy.stats = { count: 0, totalBytes: 0 };
       state.prefs.initialCapturePrompted = false;
       await savePreferences({ initialCapturePrompted: false });
+      renderSidebar();
       renderTidyContent();
       renderGallery();
       showToast('已清空本地首屏缓存');
@@ -2457,6 +2780,24 @@ function buildPointerSvgDataUrl(fill, stroke, size) {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
+function buildGrabbingSvgDataUrl(fill, stroke, size) {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none">` +
+    `<path d="M9 11.4V9a1.4 1.4 0 0 1 2.8 0v1.4m0-1.9a1.4 1.4 0 0 1 2.8 0v1.9m0-1.4a1.4 1.4 0 0 1 2.8 0v2.4m0-1.5a1.4 1.4 0 0 1 2.6.6v4.6a5.5 5.5 0 0 1-5.5 5.5h-1.4a5.2 5.2 0 0 1-4.3-2.3l-2.3-3.5a1.45 1.45 0 0 1 2.2-1.9L10 14.2V11.4Z" fill="rgba(0,0,0,0.22)" transform="translate(0.5 0.9)"/>` +
+    `<path d="M8.5 11V8.6a1.4 1.4 0 0 1 2.8 0V10m0-1.9a1.4 1.4 0 0 1 2.8 0V10m0-1.4a1.4 1.4 0 0 1 2.8 0V11m0-1.5a1.4 1.4 0 0 1 2.6.6v4.6a5.5 5.5 0 0 1-5.5 5.5h-1.4a5.2 5.2 0 0 1-4.3-2.3l-2.3-3.5a1.45 1.45 0 0 1 2.2-1.9l1.3 1.3V11Z" fill="${fill}" stroke="${stroke}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+function buildGrabbingHardwareCursorValue(fill, stroke) {
+  const u1 = buildGrabbingSvgDataUrl(fill, stroke, 24);
+  if (customCursorSupportsImageSet) {
+    const u2 = buildGrabbingSvgDataUrl(fill, stroke, 48);
+    return `image-set(${u1} 1x, ${u2} 2x) 12 12, grabbing`;
+  }
+  return `${u1} 12 12, grabbing`;
+}
+
 function buildHardwareCursorValue(fill, stroke, fallback) {
   const u1 = buildPointerSvgDataUrl(fill, stroke, 24);
   if (customCursorSupportsImageSet) {
@@ -2494,6 +2835,7 @@ function initCustomCursor() {
   root.style.setProperty('--folio-cursor-violet', buildHardwareCursorValue('#8b5cf6', '#ffffff', 'pointer'));
   root.style.setProperty('--folio-cursor-amber', buildHardwareCursorValue('#d98a1c', '#ffffff', 'pointer'));
   root.style.setProperty('--folio-cursor-rose', buildHardwareCursorValue('#e54865', '#ffffff', 'pointer'));
+  root.style.setProperty('--folio-cursor-grabbing', buildGrabbingHardwareCursorValue('#7c5cf6', '#ffffff'));
   updateCustomCursorTheme();
   root.classList.add('has-custom-cursor');
 
@@ -2564,6 +2906,7 @@ function initCustomCursor() {
 
   const resolveCursorPill = (target) => {
     if (!target || !(target instanceof Element)) return null;
+    if (document.documentElement.classList.contains('is-dragging-card')) return null;
     if (els.cardContextMenu && !els.cardContextMenu.hidden) return null;
     if (target.closest('input, textarea, select')) return null;
 
@@ -2698,6 +3041,7 @@ function initCustomCursor() {
     { passive: true }
   );
 
+  document.addEventListener('dragstart', hidePill, { passive: true });
   document.addEventListener('contextmenu', hidePill, { passive: true });
   document.addEventListener('mouseleave', hidePill, { passive: true });
   window.addEventListener('blur', hidePill, { passive: true });
@@ -2732,6 +3076,7 @@ async function init() {
     if (msg.type === 'SCREENSHOT_UPDATED' && msg.key) {
       state.thumbMeta.set(msg.key, { capturedAt: msg.capturedAt, size: msg.size, status: 'ok' });
       await refreshLiveCardsForKey(msg.key);
+      renderSidebar();
     } else if (msg.type === 'BATCH_PROGRESS') {
       state.batch = msg;
       renderBatchBanner();
