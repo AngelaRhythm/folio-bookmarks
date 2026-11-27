@@ -344,11 +344,24 @@ export async function moveBookmark(id, destination) {
     return chrome.bookmarks.move(id, destination);
   }
   const found = findNodeAndParent(mockTree, id);
-  const destFound = findNodeAndParent(mockTree, destination.parentId);
+  const targetParentId = destination.parentId ?? found?.parent?.id;
+  const destFound = findNodeAndParent(mockTree, targetParentId);
   if (!found || !destFound || !destFound.node.children) return null;
-  found.parent.children.splice(found.index, 1);
+  const sameParent = found.parent.id === destFound.node.id;
+  const oldIndex = found.index;
+  found.parent.children.splice(oldIndex, 1);
   found.node.parentId = destFound.node.id;
-  destFound.node.children.push(found.node);
+  if (typeof destination.index === 'number') {
+    // Match Chromium BookmarkModel::Move semantics (pre-removal index shifts left by 1 when moving down in same parent)
+    let insertAt = destination.index;
+    if (sameParent && oldIndex < insertAt) {
+      insertAt -= 1;
+    }
+    insertAt = Math.max(0, Math.min(destFound.node.children.length, insertAt));
+    destFound.node.children.splice(insertAt, 0, found.node);
+  } else {
+    destFound.node.children.push(found.node);
+  }
   emitMockBookmarkChange();
   return found.node;
 }

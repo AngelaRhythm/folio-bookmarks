@@ -1,6 +1,17 @@
-// Early New Tab Gate — runs in <head> before paint so turning OFF "launchOnNewTab"
-// seamlessly falls back to Chrome's native New Tab Page without flashing Folio's UI.
+// Early New Tab Gate & Pre-Paint Layout Hydration — runs in <head> before paint so:
+// 1) Collapsed sidebar renders immediately at 60px on frame 0 with zero reload collapse animation.
+// 2) Turning OFF "launchOnNewTab" seamlessly falls back to Chrome's native New Tab Page without flashing Folio's UI.
 (() => {
+  const root = document.documentElement;
+  root.classList.add('is-booting');
+  try {
+    if (localStorage.getItem('folio_sidebar_collapsed') === '1') {
+      root.classList.add('is-sidebar-collapsed-boot');
+    }
+  } catch {
+    // Ignore storage restrictions
+  }
+
   if (typeof chrome === 'undefined' || !chrome.storage?.local || !chrome.runtime?.id) {
     return;
   }
@@ -29,7 +40,6 @@
     // Continue to preference check
   }
 
-  const root = document.documentElement;
   root.classList.add('is-gate-pending');
 
   chrome.storage.local.get('launchOnNewTab', (res) => {

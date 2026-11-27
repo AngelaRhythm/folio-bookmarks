@@ -98,17 +98,15 @@ export const ICONS = {
 
   // --- Tabler Icons (24x24, 1.75px stroke, round cap & join) ---
 
-  // Tabler: layout-sidebar-left-collapse / layout-sidebar-left-expand
+  // Tabler: chevrons-left / chevrons-right (mirrors right settings panel double-chevron icon)
   sidebarCollapse: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"/>
-    <path d="M9 4v16"/>
-    <path d="M15 10l-2 2l2 2"/>
+    <path d="M11 7l-5 5l5 5"/>
+    <path d="M17 7l-5 5l5 5"/>
   </svg>`,
 
   sidebarExpand: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"/>
-    <path d="M9 4v16"/>
-    <path d="M14 10l2 2l-2 2"/>
+    <path d="M7 7l5 5l-5 5"/>
+    <path d="M13 7l5 5l-5 5"/>
   </svg>`,
 
   // Tabler: chevrons-right (tuck right split pane away, visually distinct from left sidebar box icon)

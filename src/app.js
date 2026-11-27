@@ -280,11 +280,14 @@ function parseBookmarkTree(tree) {
 
     folderMap.set(folderObj.id, folderObj);
 
-    for (const child of node.children || []) {
+    for (let childIdx = 0; childIdx < (node.children || []).length; childIdx++) {
+      const child = node.children[childIdx];
+      const chromeIndex = typeof child.index === 'number' ? child.index : childIdx;
       if (child.url) {
         const bm = {
           id: child.id,
           parentId: node.id,
+          chromeIndex,
           ancestorFolderIds: currentAncestors,
           title: child.title || getDisplayHost(child.url),
           url: child.url,
@@ -314,11 +317,14 @@ function parseBookmarkTree(tree) {
   // Flatten Chrome's default top containers ("书签栏", "其他书签", "移动设备书签")
   // so the user's real folders appear directly in the sidebar.
   for (const container of systemContainers) {
-    for (const child of container.children || []) {
+    for (let childIdx = 0; childIdx < (container.children || []).length; childIdx++) {
+      const child = container.children[childIdx];
+      const chromeIndex = typeof child.index === 'number' ? child.index : childIdx;
       if (child.url) {
         const bm = {
           id: child.id,
           parentId: container.id,
+          chromeIndex,
           ancestorFolderIds: [container.id],
           title: child.title || getDisplayHost(child.url),
           url: child.url,
@@ -393,7 +399,12 @@ function applyTheme() {
 function applyLayoutPreferences() {
   const collapsed = Boolean(state.prefs.sidebarCollapsed);
   els.sidebar.classList.toggle('is-collapsed', collapsed);
-  els.btnCollapseSidebar.innerHTML = collapsed ? ICONS.sidebarExpand : ICONS.sidebarCollapse;
+  els.btnCollapseSidebar.setAttribute('aria-label', collapsed ? '展开侧边栏' : '收起侧边栏');
+  try {
+    localStorage.setItem('folio_sidebar_collapsed', collapsed ? '1' : '0');
+  } catch {
+    // Ignore storage restrictions
+  }
 }
 
 function updateSegmentedControl(container, activeSelector) {
@@ -744,6 +755,8 @@ function buildFavoritesSectionElement() {
   `;
 
   const rail = section.querySelector('.favorites-rail');
+  rail.dataset.sortKind = 'favorites';
+  rail.dataset.gridLabel = '收藏';
   favs.forEach((bm, idx) => {
     rail.appendChild(createCardElement(bm, idx));
   });
@@ -796,6 +809,7 @@ function createCardElement(bm, index) {
   const initialLetter = escapeHtml((bm.host || bm.title || '?')[0].toUpperCase());
   const hideCover = isBookmarkExcludedFromCover(bm);
   const hasThumbMeta = !hideCover && state.thumbMeta.has(bm.key);
+  const cachedObjUrl = hasThumbMeta ? state.objectUrlCache.get(bm.key) || null : null;
   const isNew = isNewBookmark(bm);
   const isFav = isFavoriteKey(bm.key);
   const subtitle = bm.host;
@@ -809,7 +823,7 @@ function createCardElement(bm, index) {
     : `<span class="placeholder-letter">${initialLetter}</span>`;
 
   card.innerHTML = `
-    <div class="card-stage">
+    <div class="card-stage${cachedObjUrl ? ' has-thumb' : ''}">
       <a href="${escapeHtml(bm.url)}" class="card-link" draggable="false" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(bm.title)}">
         <div class="card-placeholder">
           <div class="placeholder-chrome" aria-hidden="true">
@@ -820,7 +834,7 @@ function createCardElement(bm, index) {
           <div class="placeholder-icon-wrap">${placeholderFaviconHtml}</div>
           <span class="placeholder-host">${escapeHtml(bm.host)}</span>
         </div>
-        ${hideCover ? '' : `<img class="card-thumb" data-thumb-key="${escapeHtml(bm.key)}" draggable="false" alt="" decoding="async" />`}
+        ${hideCover ? '' : `<img class="card-thumb${cachedObjUrl ? ' is-loaded' : ''}"${cachedObjUrl ? ` src="${cachedObjUrl}" decoding="sync"` : ' decoding="async"'} data-thumb-key="${escapeHtml(bm.key)}" draggable="false" alt="" />`}
         <div class="card-blur-veil" aria-hidden="true">${ICONS.eyeOff}</div>
       </a>
       <div class="card-actions">
@@ -846,9 +860,9 @@ function createCardElement(bm, index) {
     </a>
   `;
 
-  // Observe thumbnail image for lazy IndexedDB decoding
+  // Observe thumbnail image for lazy IndexedDB decoding only if not already warm in memory
   const thumbImg = card.querySelector('img.card-thumb');
-  if (thumbImg && hasThumbMeta) {
+  if (thumbImg && hasThumbMeta && !cachedObjUrl) {
     thumbObserver.observe(thumbImg);
   }
 
@@ -883,7 +897,18 @@ function updateFooterVisibility() {
   els.galleryFooter.hidden = state.allBookmarks.length === 0;
 }
 
-function renderGallery() {
+let galleryEnterTimer = 0;
+
+function renderGallery(options = {}) {
+  const animateEnter = Boolean(options.animate);
+  clearTimeout(galleryEnterTimer);
+  els.galleryRoot.classList.toggle('is-entering', animateEnter);
+  if (animateEnter) {
+    galleryEnterTimer = setTimeout(() => {
+      els.galleryRoot.classList.remove('is-entering');
+    }, 420);
+  }
+
   initThumbObserver();
   renderSubfolderBar();
 
@@ -948,6 +973,9 @@ function renderGallery() {
       `;
 
       const grid = section.querySelector('.card-grid');
+      grid.dataset.sortKind = 'bookmarks';
+      grid.dataset.gridFolderId = group.id === 'loose' ? state.rootBarId : group.id;
+      grid.dataset.gridLabel = group.title;
       for (const bm of visibleItems) {
         grid.appendChild(createCardElement(bm, cardOffset++));
       }
@@ -995,6 +1023,9 @@ function renderGallery() {
     if (selectedFolder.directBookmarks.length > 0) {
       const directGrid = document.createElement('div');
       directGrid.className = 'card-grid';
+      directGrid.dataset.sortKind = 'bookmarks';
+      directGrid.dataset.gridFolderId = selectedFolder.id;
+      directGrid.dataset.gridLabel = selectedFolder.title;
       for (const bm of selectedFolder.directBookmarks) {
         directGrid.appendChild(createCardElement(bm, cardOffset++));
       }
@@ -1017,6 +1048,9 @@ function renderGallery() {
             <div class="card-grid"></div>
           `;
           const subGrid = section.querySelector('.card-grid');
+          subGrid.dataset.sortKind = 'bookmarks';
+          subGrid.dataset.gridFolderId = sub.id;
+          subGrid.dataset.gridLabel = sub.title;
           for (const bm of sub.directBookmarks) {
             subGrid.appendChild(createCardElement(bm, cardOffset++));
           }
@@ -1035,6 +1069,9 @@ function renderGallery() {
 
   const grid = document.createElement('div');
   grid.className = 'card-grid';
+  grid.dataset.sortKind = 'bookmarks';
+  grid.dataset.gridFolderId = state.selectedFolderId === 'loose' ? state.rootBarId : selectedFolder?.id || state.rootBarId;
+  grid.dataset.gridLabel = folderName;
   items.forEach((bm, idx) => {
     grid.appendChild(createCardElement(bm, idx));
   });
@@ -1748,16 +1785,33 @@ async function openBookmarkInIncognito(bm) {
 
 // --- Data Refresh Cycle ---
 let reloadTimer = null;
+let suppressEnterAnimUntil = 0;
+let deferRefreshUntil = 0;
+let skipGalleryRerenderUntil = 0;
 
-async function refreshAllData() {
+async function refreshAllData(options = {}) {
   const prevScrollY = window.scrollY;
+  const silent = Boolean(options.silent) || performance.now() < suppressEnterAnimUntil;
+  const skipGallery = Boolean(options.skipGallery) || performance.now() < skipGalleryRerenderUntil;
   const [tree, thumbMeta] = await Promise.all([getBookmarkTree(), getThumbnailMetaMap()]);
   state.thumbMeta = thumbMeta;
   parseBookmarkTree(tree);
-  renderSidebar();
-  renderGallery();
-  if (prevScrollY > 0) {
-    requestAnimationFrame(() => window.scrollTo(0, prevScrollY));
+  if (!skipGallery) {
+    renderSidebar();
+    if (silent) {
+      els.galleryRoot.classList.add('is-no-enter-anim');
+    }
+    renderGallery();
+    if (prevScrollY > 0) {
+      requestAnimationFrame(() => window.scrollTo(0, prevScrollY));
+    }
+    if (silent) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          els.galleryRoot.classList.remove('is-no-enter-anim');
+        });
+      });
+    }
   }
   if (state.tidy.open) {
     state.tidy.stats = await getStorageStats();
@@ -1767,9 +1821,10 @@ async function refreshAllData() {
 
 function scheduleRefreshAllData() {
   clearTimeout(reloadTimer);
+  const waitMs = Math.max(150, Math.ceil(deferRefreshUntil - performance.now()));
   reloadTimer = setTimeout(() => {
     refreshAllData();
-  }, 150);
+  }, waitMs);
 }
 
 // --- Event Listeners ---
@@ -1777,7 +1832,11 @@ function bindEvents() {
   // Static icons hydration
   document.querySelector('.brand-mark').innerHTML = ICONS.brand;
   if (els.onboardingMark) els.onboardingMark.innerHTML = ICONS.brand;
-  els.btnCollapseSidebar.innerHTML = state.prefs.sidebarCollapsed ? ICONS.sidebarExpand : ICONS.sidebarCollapse;
+  els.btnCollapseSidebar.innerHTML = `
+    <span class="sidebar-toggle-icon is-collapse" aria-hidden="true">${ICONS.sidebarCollapse}</span>
+    <span class="sidebar-toggle-icon is-brand" aria-hidden="true">${ICONS.brand}</span>
+    <span class="sidebar-toggle-icon is-expand" aria-hidden="true">${ICONS.sidebarExpand}</span>
+  `;
   els.btnMobileMenu.innerHTML = ICONS.menu;
   els.btnCloseTidy.innerHTML = ICONS.sidebarRightCollapse;
   els.btnCloseTidy.title = '收起设置面板';
@@ -1818,12 +1877,14 @@ function bindEvents() {
     state.selectedFolderId = 'all';
     state.activeSubfolderId = 'all';
     syncSidebarActiveState();
-    renderGallery();
+    renderGallery({ animate: true });
   });
 
   // Sidebar collapse toggle
+  let sidebarAnimatingUntil = 0;
   els.btnCollapseSidebar.addEventListener('click', () => {
-    suppressOverlayScrollbars(340);
+    sidebarAnimatingUntil = performance.now() + 300;
+    suppressOverlayScrollbars(310);
     state.prefs.sidebarCollapsed = !state.prefs.sidebarCollapsed;
     savePreferences({ sidebarCollapsed: state.prefs.sidebarCollapsed });
     applyLayoutPreferences();
@@ -1865,7 +1926,7 @@ function bindEvents() {
     state.selectedFolderId = item.dataset.folderId;
     state.activeSubfolderId = 'all';
     syncSidebarActiveState();
-    renderGallery();
+    renderGallery({ animate: true });
     window.scrollTo({ top: 0, behavior: 'smooth' });
     closeMobileSidebar();
   });
@@ -1892,12 +1953,69 @@ function bindEvents() {
   els.sidebar.addEventListener('mouseleave', hideTooltip);
   els.sidebar.addEventListener('click', hideTooltip);
 
-  // Pointer-Event Drag & Drop Bookmark Cards directly onto Sidebar Folders
-  // Eliminates Chrome's translucent OS drag ghost (zero double-cover!) and unlocks a custom hardware grabbing cursor.
+  // Pointer-Event Drag & Drop (005-drag-ripple style):
+  // 1) In-content card reordering (same folder, cross-section folders, and Favorites rail):
+  //    - Zero mid-drag DOM reflow (transforms only!)
+  //    - Whisper-quiet thin vertical insertion line in the target gap (grows from middle, glides between gaps; hidden over own slot)
+  //    - Outward directional ripple on the target row: A * 0.7^n (A = 8px) with 24ms * n stagger and ~250ms micro-overshoot spring
+  //    - Crisp FLIP spring settle on drop; Esc or outside drop springs everything cleanly back
+  //    - Keyboard reordering via Alt + ArrowLeft / ArrowRight on focused bookmark cards
+  // 2) Direct drag onto Sidebar Folders to move bookmarks into any folder
+  const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const RIPPLE_AMPLITUDE_PX = 8;
+  const RIPPLE_DECAY = 0.7;
+  const RIPPLE_STAGGER_MS = 24;
+  const RIPPLE_SPRING = 'transform 250ms cubic-bezier(0.22, 1.22, 0.36, 1)';
+  const SETTLE_SPRING = 'transform 280ms cubic-bezier(0.22, 1.12, 0.36, 1)';
+
   let dragGhostEl = null;
-  let dragCandidate = null; // { card, bm, pointerId, startX, startY, active }
+  let dropLineEl = null;
+  let dropLineVisible = false;
+  let dragCandidate = null;
   let activeDropTarget = null;
+  let activeInsertion = null; // { grid, insertIdx, beforeEl, nextBmId, prevBmId, rowItems, rowGap, lineX, lineTop, lineHeight }
+  let rippledEls = new Set();
+  let dragAutoScrollRaf = 0;
   let suppressCardClickUntil = 0;
+  let cleanupTimer = 0;
+
+  const ensureDropLineEl = () => {
+    if (dropLineEl && dropLineEl.isConnected) return dropLineEl;
+    const el = document.createElement('div');
+    el.id = 'folio-drop-line';
+    el.className = 'folio-drop-line';
+    el.setAttribute('aria-hidden', 'true');
+    el.innerHTML = `<span class="folio-drop-line-bar"></span>`;
+    document.body.appendChild(el);
+    dropLineEl = el;
+    return el;
+  };
+
+  const showDropLine = (lineX, lineTop, lineHeight) => {
+    const el = ensureDropLineEl();
+    const x = Math.round(lineX - 1);
+    const y = Math.round(lineTop);
+    const h = Math.round(lineHeight);
+    if (!dropLineVisible) {
+      el.classList.add('is-snapping');
+      el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      el.style.height = `${h}px`;
+      void el.offsetWidth;
+      el.classList.remove('is-snapping');
+      el.classList.add('is-visible');
+      dropLineVisible = true;
+    } else {
+      el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      el.style.height = `${h}px`;
+    }
+  };
+
+  const hideDropLine = () => {
+    if (dropLineEl && dropLineVisible) {
+      dropLineEl.classList.remove('is-visible');
+    }
+    dropLineVisible = false;
+  };
 
   const positionDragGhost = (x, y) => {
     if (!dragGhostEl) return;
@@ -1915,7 +2033,395 @@ function bindEvents() {
     }
   };
 
-  const finishPointerDrag = () => {
+  // Layout-space resting rect (immune to CSS ripple transforms -> 100% stable hit-testing)
+  const getRestingRect = (el, container, containerRect) => {
+    if (el.offsetParent === container) {
+      const left = containerRect.left + el.offsetLeft - container.scrollLeft;
+      const top = containerRect.top + el.offsetTop - container.scrollTop;
+      const width = el.offsetWidth;
+      const height = el.offsetHeight;
+      return {
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
+        width,
+        height,
+        cx: left + width * 0.5,
+        cy: top + height * 0.5
+      };
+    }
+    const r = el.getBoundingClientRect();
+    return {
+      left: r.left,
+      top: r.top,
+      right: r.right,
+      bottom: r.bottom,
+      width: r.width,
+      height: r.height,
+      cx: r.left + r.width * 0.5,
+      cy: r.top + r.height * 0.5
+    };
+  };
+
+  // Apply outward ripple displacement (A * 0.7^n, 24ms * n stagger) to the active row only
+  const applyRippleForInsertion = (insertion) => {
+    if (reducedMotionQuery.matches) {
+      clearRipples(false);
+      return;
+    }
+
+    const nextActive = new Map();
+    if (insertion && insertion.rowItems && insertion.rowItems.length > 0) {
+      const { rowItems, rowGap } = insertion;
+      for (let i = 0; i < rowItems.length; i++) {
+        const el = rowItems[i].el;
+        let n = 0;
+        let dir = 0;
+        if (i < rowGap) {
+          n = rowGap - 1 - i;
+          dir = -1;
+        } else {
+          n = i - rowGap;
+          dir = 1;
+        }
+        const dx = dir * Number((RIPPLE_AMPLITUDE_PX * Math.pow(RIPPLE_DECAY, n)).toFixed(2));
+        const delayMs = n * RIPPLE_STAGGER_MS;
+        nextActive.set(el, { dx, delayMs });
+      }
+    }
+
+    // Spring back any elements that are no longer on the parted row
+    for (const el of rippledEls) {
+      if (!nextActive.has(el) && el.isConnected) {
+        el.style.transition = RIPPLE_SPRING;
+        el.style.transitionDelay = '0ms';
+        el.style.transform = '';
+      }
+    }
+
+    // Apply outward lean + staggered delay to items flanking the insertion line
+    for (const [el, { dx, delayMs }] of nextActive.entries()) {
+      el.style.transition = RIPPLE_SPRING;
+      el.style.transitionDelay = `${delayMs}ms`;
+      el.style.transform = el.classList.contains('is-dragging')
+        ? `translate3d(${dx}px, 0, 0) scale(0.985)`
+        : `translate3d(${dx}px, 0, 0)`;
+    }
+
+    rippledEls = new Set(nextActive.keys());
+  };
+
+  const clearRipples = (animate = true) => {
+    for (const el of rippledEls) {
+      if (!el.isConnected) continue;
+      if (animate && !reducedMotionQuery.matches) {
+        el.style.transition = RIPPLE_SPRING;
+        el.style.transitionDelay = '0ms';
+        el.style.transform = '';
+      } else {
+        el.style.transition = 'none';
+        el.style.transitionDelay = '';
+        el.style.transform = '';
+      }
+    }
+    rippledEls.clear();
+  };
+
+  const cleanupInlineTransforms = () => {
+    const items = els.galleryRoot.querySelectorAll('.bookmark-card, .view-all-card');
+    for (const el of items) {
+      if (el.style.transition || el.style.transform || el.style.transitionDelay) {
+        el.style.transition = '';
+        el.style.transitionDelay = '';
+        el.style.transform = '';
+      }
+    }
+  };
+
+  // Spring FLIP settle when committing a drop or keyboard reorder
+  const animateFlipSettle = (containers, mutateDom) => {
+    const uniqueContainers = Array.from(new Set(containers.filter(Boolean)));
+    if (reducedMotionQuery.matches || uniqueContainers.length === 0) {
+      clearRipples(false);
+      mutateDom();
+      return;
+    }
+
+    const tracked = [];
+    const firstRects = new Map();
+    for (const container of uniqueContainers) {
+      const items = container.querySelectorAll(':scope > .bookmark-card, :scope > .view-all-card');
+      for (const item of items) {
+        firstRects.set(item, item.getBoundingClientRect());
+        tracked.push(item);
+      }
+    }
+
+    rippledEls.clear();
+    for (const item of tracked) {
+      item.style.transition = 'none';
+      item.style.transitionDelay = '';
+      item.style.transform = '';
+    }
+
+    mutateDom();
+
+    const moved = [];
+    for (const item of tracked) {
+      if (!item.isConnected) continue;
+      const first = firstRects.get(item);
+      const last = item.getBoundingClientRect();
+      const dx = first.left - last.left;
+      const dy = first.top - last.top;
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+        item.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+        moved.push(item);
+      } else {
+        item.style.transition = '';
+      }
+    }
+
+    if (moved.length === 0) return;
+    void uniqueContainers[0].offsetWidth;
+
+    for (const item of moved) {
+      item.style.transition = SETTLE_SPRING;
+      item.style.transitionDelay = '0ms';
+      item.style.transform = '';
+    }
+  };
+
+  const resolveSortableGridAt = (clientX, clientY, dc) => {
+    if (!dc || !dc.originGrid) return null;
+    if (dc.originKind === 'favorites') {
+      const r = dc.originGrid.getBoundingClientRect();
+      if (clientX >= r.left - 28 && clientX <= r.right + 28 && clientY >= r.top - 40 && clientY <= r.bottom + 40) {
+        return dc.originGrid;
+      }
+      return null;
+    }
+
+    const grids = Array.from(els.galleryRoot.querySelectorAll('.card-grid[data-sort-kind="bookmarks"]'));
+    for (const grid of grids) {
+      const r = grid.getBoundingClientRect();
+      if (clientX >= r.left - 18 && clientX <= r.right + 18 && clientY >= r.top - 16 && clientY <= r.bottom + 16) {
+        return grid;
+      }
+    }
+    return null;
+  };
+
+  // Compute exact thin vertical insertion line & flanking row items for pointer position
+  const computeGapInsertion = (grid, dragCard, clientX, clientY) => {
+    const gridRect = grid.getBoundingClientRect();
+    const isHorizontalRail = grid.dataset.sortKind === 'favorites';
+    const cards = Array.from(grid.querySelectorAll(':scope > .bookmark-card'));
+    const viewAll = grid.querySelector(':scope > .view-all-card');
+    if (cards.length === 0) return null;
+
+    const dragIdx = cards.indexOf(dragCard);
+
+    // Group bookmark cards into visual rows using layout-space resting rects
+    const rows = [];
+    for (let i = 0; i < cards.length; i++) {
+      const el = cards[i];
+      const rect = getRestingRect(el, grid, gridRect);
+      const stageEl = el.querySelector('.card-stage');
+      const stageH = stageEl ? stageEl.offsetHeight : rect.height * 0.72;
+      const entry = { el, rect, idx: i, stageH };
+      if (isHorizontalRail) {
+        if (rows.length === 0) {
+          rows.push({ top: rect.top, bottom: rect.bottom, stageH, bookmarks: [entry], viewAll: null });
+        } else {
+          rows[0].bookmarks.push(entry);
+          rows[0].bottom = Math.max(rows[0].bottom, rect.bottom);
+        }
+      } else {
+        const lastRow = rows[rows.length - 1];
+        if (!lastRow || Math.abs(rect.top - lastRow.top) > rect.height * 0.45) {
+          rows.push({ top: rect.top, bottom: rect.bottom, stageH, bookmarks: [entry], viewAll: null });
+        } else {
+          lastRow.bookmarks.push(entry);
+          lastRow.bottom = Math.max(lastRow.bottom, rect.bottom);
+        }
+      }
+    }
+
+    if (viewAll && rows.length > 0) {
+      const vaRect = getRestingRect(viewAll, grid, gridRect);
+      const lastRow = rows[rows.length - 1];
+      if (!isHorizontalRail && Math.abs(vaRect.top - lastRow.top) <= vaRect.height * 0.45) {
+        lastRow.viewAll = { el: viewAll, rect: vaRect };
+      }
+    }
+
+    // Pick the row matching clientY (or nearest row inside padded grid bounds)
+    let targetRow = null;
+    let bestDist = Infinity;
+    for (const row of rows) {
+      if (clientY >= row.top - 12 && clientY <= row.bottom + 12) {
+        targetRow = row;
+        break;
+      }
+      const dist = clientY < row.top ? row.top - clientY : clientY - row.bottom;
+      if (dist < bestDist) {
+        bestDist = dist;
+        targetRow = row;
+      }
+    }
+    if (!targetRow) return null;
+
+    // Determine gap index within targetRow by comparing clientX with each card's horizontal center
+    const rowBms = targetRow.bookmarks;
+    let rowGap = rowBms.length;
+    for (let j = 0; j < rowBms.length; j++) {
+      if (clientX < rowBms[j].rect.cx) {
+        rowGap = j;
+        break;
+      }
+    }
+
+    const insertIdx = rowGap < rowBms.length ? rowBms[rowGap].idx : rowBms[rowBms.length - 1].idx + 1;
+
+    // Rule #3: Never show line or ripple over the dragged item's own slot (no-op drop)
+    if (dragIdx >= 0 && (insertIdx === dragIdx || insertIdx === dragIdx + 1)) {
+      return null;
+    }
+
+    // Compute exact pixel center of the vertical gap aligned to card-stage height
+    let lineX;
+    if (rowGap > 0 && rowGap < rowBms.length) {
+      lineX = (rowBms[rowGap - 1].rect.right + rowBms[rowGap].rect.left) * 0.5;
+    } else if (rowGap === 0) {
+      lineX = rowBms[0].rect.left - 8;
+    } else if (targetRow.viewAll) {
+      lineX = (rowBms[rowBms.length - 1].rect.right + targetRow.viewAll.rect.left) * 0.5;
+    } else {
+      lineX = rowBms[rowBms.length - 1].rect.right + 8;
+    }
+
+    const lineTop = targetRow.top + 6;
+    const lineHeight = Math.max(40, targetRow.stageH - 12);
+    const beforeEl = insertIdx < cards.length ? cards[insertIdx] : viewAll || null;
+
+    // Snapshot neighbor IDs excluding the dragged card itself
+    let nextBmId = null;
+    for (let k = insertIdx; k < cards.length; k++) {
+      if (cards[k] !== dragCard) {
+        nextBmId = cards[k].dataset.bookmarkId || null;
+        break;
+      }
+    }
+    let prevBmId = null;
+    for (let k = insertIdx - 1; k >= 0; k--) {
+      if (cards[k] !== dragCard) {
+        prevBmId = cards[k].dataset.bookmarkId || null;
+        break;
+      }
+    }
+
+    const rowItems = targetRow.viewAll ? [...rowBms, targetRow.viewAll] : [...rowBms];
+
+    return {
+      grid,
+      insertIdx,
+      beforeEl,
+      nextBmId,
+      prevBmId,
+      rowItems,
+      rowGap,
+      lineX,
+      lineTop,
+      lineHeight
+    };
+  };
+
+  const updateRippleAndDropLine = (clientX, clientY) => {
+    const dc = dragCandidate;
+    if (!dc || !dc.active) return;
+
+    // Over sidebar drop folder -> clear in-content insertion line & spring cards back cleanly
+    if (activeDropTarget) {
+      activeInsertion = null;
+      hideDropLine();
+      clearRipples(true);
+      return;
+    }
+
+    const targetGrid = resolveSortableGridAt(clientX, clientY, dc);
+    const insertion = targetGrid ? computeGapInsertion(targetGrid, dc.card, clientX, clientY) : null;
+    activeInsertion = insertion;
+
+    if (!insertion) {
+      hideDropLine();
+      clearRipples(true);
+      return;
+    }
+
+    showDropLine(insertion.lineX, insertion.lineTop, insertion.lineHeight);
+    applyRippleForInsertion(insertion);
+  };
+
+  const stopDragAutoScroll = () => {
+    if (dragAutoScrollRaf) {
+      cancelAnimationFrame(dragAutoScrollRaf);
+      dragAutoScrollRaf = 0;
+    }
+  };
+
+  const startDragAutoScroll = () => {
+    stopDragAutoScroll();
+    const step = () => {
+      if (!dragCandidate?.active) {
+        dragAutoScrollRaf = 0;
+        return;
+      }
+      const { lastX, lastY, originKind, originGrid } = dragCandidate;
+      let scrolled = false;
+
+      const topZone = 92;
+      const bottomZone = window.innerHeight - 64;
+      if (lastY < topZone) {
+        const speed = Math.ceil(((topZone - lastY) / topZone) * 14);
+        if (window.scrollY > 0) {
+          window.scrollBy(0, -speed);
+          scrolled = true;
+        }
+      } else if (lastY > bottomZone) {
+        const speed = Math.ceil(((lastY - bottomZone) / 64) * 14);
+        const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+        if (window.scrollY < maxScroll) {
+          window.scrollBy(0, speed);
+          scrolled = true;
+        }
+      }
+
+      if (originKind === 'favorites' && originGrid) {
+        const r = originGrid.getBoundingClientRect();
+        if (lastY >= r.top - 40 && lastY <= r.bottom + 40) {
+          const edge = 56;
+          if (lastX < r.left + edge && originGrid.scrollLeft > 0) {
+            originGrid.scrollLeft -= Math.ceil(((r.left + edge - lastX) / edge) * 12);
+            scrolled = true;
+          } else if (lastX > r.right - edge && originGrid.scrollLeft < originGrid.scrollWidth - originGrid.clientWidth) {
+            originGrid.scrollLeft += Math.ceil(((lastX - (r.right - edge)) / edge) * 12);
+            scrolled = true;
+          }
+        }
+      }
+
+      if (scrolled) {
+        updateRippleAndDropLine(lastX, lastY);
+      }
+      dragAutoScrollRaf = requestAnimationFrame(step);
+    };
+    dragAutoScrollRaf = requestAnimationFrame(step);
+  };
+
+  const finishPointerDrag = (animateRippleBack = true) => {
+    stopDragAutoScroll();
+    hideDropLine();
     if (dragGhostEl) {
       dragGhostEl.remove();
       dragGhostEl = null;
@@ -1924,8 +2430,19 @@ function bindEvents() {
       dragCandidate.card.classList.remove('is-dragging');
     }
     clearDropTarget();
+    if (animateRippleBack) {
+      clearRipples(true);
+    }
     document.documentElement.classList.remove('is-dragging-card');
+    clearTimeout(cleanupTimer);
+    cleanupTimer = setTimeout(() => {
+      if (!dragCandidate?.active) {
+        els.galleryRoot.classList.remove('is-reordering');
+        cleanupInlineTransforms();
+      }
+    }, 310);
     state.dragBookmarkId = null;
+    activeInsertion = null;
     dragCandidate = null;
   };
 
@@ -1937,17 +2454,20 @@ function bindEvents() {
     ghost.setAttribute('aria-hidden', 'true');
     ghost.style.setProperty('--card-hue', String(getDomainHue(bm?.url || '')));
 
+    const inner = document.createElement('div');
+    inner.className = 'folio-drag-ghost-card';
+
     const loadedThumb = card.querySelector('img.card-thumb.is-loaded');
     if (loadedThumb && loadedThumb.src) {
       const img = document.createElement('img');
       img.className = 'folio-drag-ghost-img';
       img.src = loadedThumb.src;
       img.alt = '';
-      ghost.appendChild(img);
+      inner.appendChild(img);
     } else {
       const favUrl = bm ? getFaviconUrl(bm.url, 32) : '';
       const initial = escapeHtml(((bm?.host || bm?.title || '?')[0] || '?').toUpperCase());
-      ghost.innerHTML = `
+      inner.innerHTML = `
         <div class="folio-drag-ghost-placeholder">
           <div class="folio-drag-ghost-icon">${favUrl ? `<img src="${escapeHtml(favUrl)}" alt="" />` : initial}</div>
           <span class="folio-drag-ghost-host">${escapeHtml(bm?.host || '')}</span>
@@ -1960,11 +2480,53 @@ function bindEvents() {
       veil.className = 'card-blur-veil';
       veil.style.opacity = '1';
       veil.innerHTML = ICONS.eyeOff;
-      ghost.appendChild(veil);
+      inner.appendChild(veil);
     }
 
+    ghost.appendChild(inner);
     document.body.appendChild(ghost);
     dragGhostEl = ghost;
+  };
+
+  const commitBookmarkOrderMove = async (bm, targetGrid, nextBmId, prevBmId) => {
+    const targetFolderId = targetGrid.dataset.gridFolderId || bm.parentId;
+    const nextBm = nextBmId ? state.allBookmarks.find((b) => b.id === nextBmId) : null;
+    const prevBm = prevBmId ? state.allBookmarks.find((b) => b.id === prevBmId) : null;
+
+    let destParentId = targetFolderId;
+    let destIndex = 0;
+
+    if (nextBm && nextBm.parentId === targetFolderId) {
+      destParentId = targetFolderId;
+      destIndex = nextBm.chromeIndex;
+    } else if (prevBm && prevBm.parentId === targetFolderId) {
+      destParentId = targetFolderId;
+      destIndex = prevBm.chromeIndex + 1;
+    } else if (nextBm) {
+      destParentId = nextBm.parentId;
+      destIndex = nextBm.chromeIndex;
+    } else if (prevBm) {
+      destParentId = prevBm.parentId;
+      destIndex = prevBm.chromeIndex + 1;
+    }
+
+    const sameParent = destParentId === bm.parentId;
+    if (sameParent) {
+      // DOM already reflects the exact settled order — sync tree indices in memory with zero gallery flash!
+      skipGalleryRerenderUntil = performance.now() + 900;
+    }
+
+    await moveBookmark(bm.id, { parentId: destParentId, index: destIndex });
+    if (!sameParent) {
+      const destTitle =
+        state.folderMap.get(destParentId)?.title ||
+        targetGrid.dataset.gridLabel ||
+        (destParentId === state.rootBarId ? '未归类书签' : '目标文件夹');
+      showToast(`已移动至「${destTitle}」并同步至 Chrome`);
+    } else {
+      showToast('已调整排序并同步至 Chrome');
+    }
+    if (!IS_EXTENSION) scheduleRefreshAllData();
   };
 
   // Prevent any native HTML5 image/link drag ghost inside the gallery
@@ -1982,12 +2544,17 @@ function bindEvents() {
     if (!card) return;
     const bm = state.allBookmarks.find((b) => b.id === card.dataset.bookmarkId);
     if (!bm) return;
+    const originGrid = card.closest('.card-grid, .favorites-rail');
     dragCandidate = {
       card,
       bm,
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      originGrid,
+      originKind: originGrid?.dataset.sortKind || 'bookmarks',
       active: false
     };
   });
@@ -1996,23 +2563,29 @@ function bindEvents() {
     'pointermove',
     (e) => {
       if (!dragCandidate || e.pointerId !== dragCandidate.pointerId) return;
+      dragCandidate.lastX = e.clientX;
+      dragCandidate.lastY = e.clientY;
+
       if (!dragCandidate.active) {
         if (Math.hypot(e.clientX - dragCandidate.startX, e.clientY - dragCandidate.startY) < 6) {
           return;
         }
+        clearTimeout(cleanupTimer);
         dragCandidate.active = true;
         state.dragBookmarkId = dragCandidate.bm.id;
+        els.galleryRoot.classList.add('is-reordering');
         dragCandidate.card.classList.add('is-dragging');
         document.documentElement.classList.add('is-dragging-card');
         document.getElementById('folio-cursor-pill')?.classList.remove('is-visible', 'is-pressed');
         closeCardContextMenu();
         closeMovePopover();
         createDragGhostForCard(dragCandidate.card, dragCandidate.bm);
+        startDragAutoScroll();
       }
 
       positionDragGhost(e.clientX, e.clientY);
 
-      // Only run DOM hit-testing when pointer is over the sidebar region (saves per-pixel hit-tests over gallery)
+      // Sidebar folder drop detection takes priority when pointer enters sidebar region
       const sidebarRight = els.sidebar ? els.sidebar.offsetWidth + 8 : 260;
       const dropEl =
         e.clientX <= sidebarRight
@@ -2025,34 +2598,144 @@ function bindEvents() {
           activeDropTarget = dropEl;
         }
       }
+
+      updateRippleAndDropLine(e.clientX, e.clientY);
+    },
+    { passive: true }
+  );
+
+  // Keep thin insertion line locked to gap if user scrolls via trackpad/wheel while dragging
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (dragCandidate?.active) {
+        updateRippleAndDropLine(dragCandidate.lastX, dragCandidate.lastY);
+      }
     },
     { passive: true }
   );
 
   window.addEventListener('pointerup', async (e) => {
     if (!dragCandidate || e.pointerId !== dragCandidate.pointerId) return;
-    const wasActive = dragCandidate.active;
-    const bmId = dragCandidate.bm.id;
+    const dc = dragCandidate;
+    const wasActive = dc.active;
+    const bm = dc.bm;
     const dropEl = activeDropTarget;
-    finishPointerDrag();
+    const insertion = activeInsertion;
 
+    // Path 1: Dropped onto a Sidebar Folder
+    if (wasActive && dropEl) {
+      finishPointerDrag(true);
+      suppressCardClickUntil = performance.now() + 220;
+      const destFolderId = dropEl.dataset.dropFolderId;
+      await moveBookmark(bm.id, { parentId: destFolderId });
+      const folderTitle = state.folderMap.get(destFolderId)?.title || '目标文件夹';
+      showToast(`已移动至「${folderTitle}」并同步至 Chrome`);
+      if (!IS_EXTENSION) await refreshAllData();
+      return;
+    }
+
+    // Path 2: Dropped at a valid in-content gap -> FLIP spring every item into its new place
+    if (wasActive && insertion && insertion.grid) {
+      const targetGrid = insertion.grid;
+      const originGrid = dc.originGrid;
+      const landedCard = dc.card;
+      const beforeEl =
+        insertion.beforeEl && insertion.beforeEl.parentElement === targetGrid ? insertion.beforeEl : null;
+
+      finishPointerDrag(false);
+      suppressCardClickUntil = performance.now() + 220;
+      deferRefreshUntil = performance.now() + 320;
+      suppressEnterAnimUntil = performance.now() + 900;
+
+      if (beforeEl !== landedCard) {
+        animateFlipSettle([originGrid, targetGrid], () => {
+          targetGrid.insertBefore(landedCard, beforeEl);
+        });
+      } else {
+        clearRipples(true);
+      }
+
+      if (dc.originKind === 'favorites') {
+        const nextFavKeys = Array.from(targetGrid.querySelectorAll(':scope > .bookmark-card[data-key]'))
+          .map((el) => el.dataset.key)
+          .filter(Boolean);
+        state.prefs.favoriteKeys = nextFavKeys;
+        await savePreferences({ favoriteKeys: nextFavKeys });
+        showToast('已调整收藏顺序');
+        return;
+      }
+
+      await commitBookmarkOrderMove(bm, targetGrid, insertion.nextBmId, insertion.prevBmId);
+      return;
+    }
+
+    // Path 3: Dropped over own slot or outside list -> cancel & spring everything back
+    finishPointerDrag(true);
     if (wasActive) {
       suppressCardClickUntil = performance.now() + 220;
-      if (dropEl) {
-        const destFolderId = dropEl.dataset.dropFolderId;
-        await moveBookmark(bmId, { parentId: destFolderId });
-        const folderTitle = state.folderMap.get(destFolderId)?.title || '目标文件夹';
-        showToast(`已移动至「${folderTitle}」并同步至 Chrome`);
-        if (!IS_EXTENSION) await refreshAllData();
-      }
     }
   });
 
-  window.addEventListener('pointercancel', finishPointerDrag);
-  window.addEventListener('blur', finishPointerDrag);
-  document.addEventListener('keydown', (e) => {
+  window.addEventListener('pointercancel', () => finishPointerDrag(true));
+  window.addEventListener('blur', () => finishPointerDrag(true));
+  document.addEventListener('keydown', async (e) => {
     if (e.key === 'Escape' && dragCandidate?.active) {
-      finishPointerDrag();
+      finishPointerDrag(true);
+      return;
+    }
+
+    // Accessible keyboard reordering: Alt + ArrowLeft / ArrowRight on a focused bookmark card
+    if (
+      e.altKey &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.shiftKey &&
+      (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+      !state.spotlight.open &&
+      (!els.editBookmarkOverlay || els.editBookmarkOverlay.hidden)
+    ) {
+      const focusedCard = document.activeElement?.closest?.('.bookmark-card[data-bookmark-id]');
+      if (!focusedCard) return;
+      const grid = focusedCard.closest('.card-grid, .favorites-rail');
+      if (!grid) return;
+      const cards = Array.from(grid.querySelectorAll(':scope > .bookmark-card'));
+      const curIdx = cards.indexOf(focusedCard);
+      const delta = e.key === 'ArrowLeft' ? -1 : 1;
+      const nextIdx = curIdx + delta;
+      if (curIdx < 0 || nextIdx < 0 || nextIdx >= cards.length) return;
+
+      e.preventDefault();
+      const bm = state.allBookmarks.find((b) => b.id === focusedCard.dataset.bookmarkId);
+      if (!bm) return;
+      const focusSelector = document.activeElement.classList.contains('card-meta') ? 'a.card-meta' : 'a.card-link';
+      const beforeEl = delta < 0 ? cards[nextIdx] : cards[nextIdx].nextElementSibling;
+      const nextBmId = delta < 0 ? cards[nextIdx].dataset.bookmarkId : cards[nextIdx + 1]?.dataset?.bookmarkId || null;
+      const prevBmId = delta < 0 ? cards[nextIdx - 1]?.dataset?.bookmarkId || null : cards[nextIdx].dataset.bookmarkId;
+
+      els.galleryRoot.classList.add('is-reordering');
+      deferRefreshUntil = performance.now() + 320;
+      suppressEnterAnimUntil = performance.now() + 900;
+      animateFlipSettle([grid], () => {
+        grid.insertBefore(focusedCard, beforeEl);
+      });
+      focusedCard.querySelector(focusSelector)?.focus({ preventScroll: true });
+      clearTimeout(cleanupTimer);
+      cleanupTimer = setTimeout(() => {
+        els.galleryRoot.classList.remove('is-reordering');
+        cleanupInlineTransforms();
+      }, 310);
+
+      if (grid.dataset.sortKind === 'favorites') {
+        const nextFavKeys = Array.from(grid.querySelectorAll(':scope > .bookmark-card[data-key]'))
+          .map((el) => el.dataset.key)
+          .filter(Boolean);
+        state.prefs.favoriteKeys = nextFavKeys;
+        await savePreferences({ favoriteKeys: nextFavKeys });
+        showToast('已调整收藏顺序');
+      } else {
+        await commitBookmarkOrderMove(bm, grid, nextBmId, prevBmId);
+      }
     }
   });
 
@@ -2083,7 +2766,7 @@ function bindEvents() {
       state.selectedFolderId = jumpBtn.dataset.jumpFolder;
       state.activeSubfolderId = 'all';
       renderSidebar();
-      renderGallery();
+      renderGallery({ animate: true });
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -2678,12 +3361,19 @@ function bindEvents() {
     const ro = new ResizeObserver(() => {
       if (state.selectedFolderId !== 'all') return;
       clearTimeout(gridResizeTimer);
+      const waitMs = Math.max(120, Math.ceil(sidebarAnimatingUntil - performance.now()) + 20);
       gridResizeTimer = setTimeout(() => {
         const nextCols = getGridColumnCount();
         if (nextCols !== state.lastGridCols) {
+          els.galleryRoot.classList.add('is-no-enter-anim');
           renderGallery();
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              els.galleryRoot.classList.remove('is-no-enter-anim');
+            });
+          });
         }
-      }, 120);
+      }, waitMs);
     });
     ro.observe(els.galleryRoot);
   }
@@ -3160,6 +3850,12 @@ async function init() {
   initCustomCursor();
   applyTheme();
   applyLayoutPreferences();
+  // Commit initial sidebar width cleanly with transitions disabled, then unlock interactive spring transitions
+  void els.sidebar.offsetWidth;
+  document.documentElement.classList.remove('is-sidebar-collapsed-boot');
+  requestAnimationFrame(() => {
+    document.documentElement.classList.remove('is-booting');
+  });
 
   // In HTTP preview mode outside Chrome Extension, seed realistic canvas thumbnails once
   if (!IS_EXTENSION) {
