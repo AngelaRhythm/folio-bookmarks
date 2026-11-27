@@ -445,12 +445,12 @@ html.is-scroll-locked {
 .sidebar-pinned {
   position: relative;
   flex-shrink: 0;
-  padding: 10px 10px 12px;
+  padding: 10px 10px 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
   background-color: var(--bg-sidebar);
-  z-index: 2;
+  z-index: 1;
 }
 
 .sidebar-pinned::after {
@@ -458,7 +458,7 @@ html.is-scroll-locked {
   position: absolute;
   left: 16px;
   right: 16px;
-  bottom: 0;
+  bottom: -12px;
   height: 0;
   border-top: 0.5px solid var(--border-hairline);
   opacity: 1;
@@ -477,6 +477,8 @@ html.is-scroll-locked {
 }
 
 .sidebar-scroll {
+  position: relative;
+  z-index: 2;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -485,9 +487,15 @@ html.is-scroll-locked {
   flex-direction: column;
 }
 
+/* Soft top fade mask only while scrolled so first-folder hover peeks stay 100% unclipped at rest */
+.sidebar-scroll.is-scrolled {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0px, rgba(0, 0, 0, 0.42) 11px, #000 22px);
+  mask-image: linear-gradient(to bottom, transparent 0px, rgba(0, 0, 0, 0.42) 11px, #000 22px);
+}
+
 .sidebar-nav {
   flex: 0 0 auto;
-  padding: 12px 10px 14px;
+  padding: 24px 10px 14px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -715,6 +723,7 @@ html.is-scroll-locked {
  * h_A(t) + h_B(t) = 62px constant on every frame -> 0px jitter for all items below! */
 .folder-peek-slot {
   position: relative;
+  z-index: 1;
   width: 100%;
   height: 0;
   overflow: visible;
@@ -767,7 +776,7 @@ html.is-scroll-locked {
   pointer-events: none;
 }
 
-/* Fanned miniature preview cards anchored to slot bottom (-14px tucked behind 68px pocket face) */
+/* Fanned miniature preview cards (2 to 4 cards) anchored to slot bottom (-14px tucked behind 68px pocket face) */
 .folder-mini-card {
   position: absolute;
   bottom: -14px;
@@ -786,52 +795,146 @@ html.is-scroll-locked {
               opacity 180ms var(--ease-out);
 }
 
+.folder-peek-stage[data-peek-count="3"] .folder-mini-card {
+  width: 88px;
+  height: 54px;
+}
+
+.folder-peek-stage[data-peek-count="4"] .folder-mini-card {
+  width: 80px;
+  height: 50px;
+}
+
 [data-theme="dark"] .folder-mini-card {
   background-color: oklch(0.24 0 0);
   border-color: oklch(1 0 0 / 0.16);
   box-shadow: 0 8px 20px oklch(0 0 0 / 0.45), 0 0 0 0.5px oklch(1 0 0 / 0.08);
 }
 
-.folder-mini-card.is-left {
-  z-index: 1;
-}
+/* Layering & staggered spring timing across 2, 3, and 4 cards */
+.folder-mini-card[data-peek-idx="0"] { z-index: 1; }
+.folder-mini-card[data-peek-idx="1"] { z-index: 2; transition-delay: 32ms, 20ms; }
+.folder-mini-card[data-peek-idx="2"] { z-index: 3; transition-delay: 64ms, 40ms; }
+.folder-mini-card[data-peek-idx="3"] { z-index: 4; transition-delay: 92ms, 56ms; }
 
-.folder-mini-card.is-right {
-  z-index: 1;
-  transition-delay: 42ms, 28ms;
-}
-
-/* Unselected Hover: crisp unobstructed micro-peek floating in front of adjacent cards */
-.nav-folder-card:not(.is-active):hover .folder-mini-card.is-left {
+/* --- 2-Card Angled Fan (minimum & fallback) --- */
+.nav-folder-card:not(.is-active):hover .folder-peek-stage[data-peek-count="2"] .folder-mini-card[data-peek-idx="0"] {
   opacity: 0.96;
   transform: translate3d(-17px, 28px, 0) scale(0.92) rotate(-5.5deg);
 }
-
-.nav-folder-card:not(.is-active):hover .folder-mini-card.is-right {
+.nav-folder-card:not(.is-active):hover .folder-peek-stage[data-peek-count="2"] .folder-mini-card[data-peek-idx="1"] {
   opacity: 0.98;
   transform: translate3d(17px, 25px, 0) scale(0.92) rotate(5deg);
 }
 
-/* Drag-Over: welcoming deeper pocket lift */
-.nav-folder-card:not(.is-active).is-drop-target .folder-mini-card.is-left {
+.nav-folder-card:not(.is-active).is-drop-target .folder-peek-stage[data-peek-count="2"] .folder-mini-card[data-peek-idx="0"] {
   opacity: 0.98;
   transform: translate3d(-18px, 22px, 0) scale(0.94) rotate(-6deg);
 }
-
-.nav-folder-card:not(.is-active).is-drop-target .folder-mini-card.is-right {
+.nav-folder-card:not(.is-active).is-drop-target .folder-peek-stage[data-peek-count="2"] .folder-mini-card[data-peek-idx="1"] {
   opacity: 1;
   transform: translate3d(18px, 19px, 0) scale(0.94) rotate(5.5deg);
 }
 
-/* Selected (Red Box): full spring fan-out inside the 62px expanded peek slot */
-.nav-folder-card.is-active .folder-mini-card.is-left {
+.nav-folder-card.is-active .folder-peek-stage[data-peek-count="2"] .folder-mini-card[data-peek-idx="0"] {
   opacity: 1;
   transform: translate3d(-22px, -8px, 0) scale(1) rotate(-7.5deg);
 }
-
-.nav-folder-card.is-active .folder-mini-card.is-right {
+.nav-folder-card.is-active .folder-peek-stage[data-peek-count="2"] .folder-mini-card[data-peek-idx="1"] {
   opacity: 1;
   transform: translate3d(22px, -12px, 0) scale(1) rotate(5.5deg);
+}
+
+/* --- 3-Card Angled Fan --- */
+.nav-folder-card:not(.is-active):hover .folder-peek-stage[data-peek-count="3"] .folder-mini-card[data-peek-idx="0"] {
+  opacity: 0.96;
+  transform: translate3d(-32px, 22px, 0) scale(0.92) rotate(-7.5deg);
+}
+.nav-folder-card:not(.is-active):hover .folder-peek-stage[data-peek-count="3"] .folder-mini-card[data-peek-idx="1"] {
+  opacity: 0.99;
+  transform: translate3d(0px, 18px, 0) scale(0.94) rotate(-1.5deg);
+}
+.nav-folder-card:not(.is-active):hover .folder-peek-stage[data-peek-count="3"] .folder-mini-card[data-peek-idx="2"] {
+  opacity: 0.97;
+  transform: translate3d(32px, 21px, 0) scale(0.92) rotate(7deg);
+}
+
+.nav-folder-card:not(.is-active).is-drop-target .folder-peek-stage[data-peek-count="3"] .folder-mini-card[data-peek-idx="0"] {
+  opacity: 0.98;
+  transform: translate3d(-36px, 17px, 0) scale(0.95) rotate(-8.5deg);
+}
+.nav-folder-card:not(.is-active).is-drop-target .folder-peek-stage[data-peek-count="3"] .folder-mini-card[data-peek-idx="1"] {
+  opacity: 1;
+  transform: translate3d(0px, 13px, 0) scale(0.97) rotate(-1.5deg);
+}
+.nav-folder-card:not(.is-active).is-drop-target .folder-peek-stage[data-peek-count="3"] .folder-mini-card[data-peek-idx="2"] {
+  opacity: 0.98;
+  transform: translate3d(36px, 16px, 0) scale(0.95) rotate(8deg);
+}
+
+.nav-folder-card.is-active .folder-peek-stage[data-peek-count="3"] .folder-mini-card[data-peek-idx="0"] {
+  opacity: 1;
+  transform: translate3d(-44px, -5px, 0) scale(1) rotate(-10deg);
+}
+.nav-folder-card.is-active .folder-peek-stage[data-peek-count="3"] .folder-mini-card[data-peek-idx="1"] {
+  opacity: 1;
+  transform: translate3d(0px, -13px, 0) scale(1) rotate(-1.5deg);
+}
+.nav-folder-card.is-active .folder-peek-stage[data-peek-count="3"] .folder-mini-card[data-peek-idx="2"] {
+  opacity: 1;
+  transform: translate3d(44px, -7px, 0) scale(1) rotate(9deg);
+}
+
+/* --- 4-Card Angled Fan (maximum) --- */
+.nav-folder-card:not(.is-active):hover .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="0"] {
+  opacity: 0.95;
+  transform: translate3d(-42px, 20px, 0) scale(0.91) rotate(-9deg);
+}
+.nav-folder-card:not(.is-active):hover .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="1"] {
+  opacity: 0.98;
+  transform: translate3d(-14px, 15px, 0) scale(0.93) rotate(-3.5deg);
+}
+.nav-folder-card:not(.is-active):hover .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="2"] {
+  opacity: 0.99;
+  transform: translate3d(14px, 14px, 0) scale(0.93) rotate(3deg);
+}
+.nav-folder-card:not(.is-active):hover .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="3"] {
+  opacity: 0.96;
+  transform: translate3d(42px, 19px, 0) scale(0.91) rotate(8.5deg);
+}
+
+.nav-folder-card:not(.is-active).is-drop-target .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="0"] {
+  opacity: 0.97;
+  transform: translate3d(-46px, 15px, 0) scale(0.94) rotate(-10deg);
+}
+.nav-folder-card:not(.is-active).is-drop-target .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="1"] {
+  opacity: 0.99;
+  transform: translate3d(-16px, 10px, 0) scale(0.96) rotate(-3.5deg);
+}
+.nav-folder-card:not(.is-active).is-drop-target .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="2"] {
+  opacity: 1;
+  transform: translate3d(16px, 9px, 0) scale(0.96) rotate(3deg);
+}
+.nav-folder-card:not(.is-active).is-drop-target .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="3"] {
+  opacity: 0.98;
+  transform: translate3d(46px, 14px, 0) scale(0.94) rotate(9.5deg);
+}
+
+.nav-folder-card.is-active .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="0"] {
+  opacity: 1;
+  transform: translate3d(-56px, -2px, 0) scale(1) rotate(-12deg);
+}
+.nav-folder-card.is-active .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="1"] {
+  opacity: 1;
+  transform: translate3d(-19px, -12px, 0) scale(1) rotate(-4.5deg);
+}
+.nav-folder-card.is-active .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="2"] {
+  opacity: 1;
+  transform: translate3d(19px, -14px, 0) scale(1) rotate(3.5deg);
+}
+.nav-folder-card.is-active .folder-peek-stage[data-peek-count="4"] .folder-mini-card[data-peek-idx="3"] {
+  opacity: 1;
+  transform: translate3d(56px, -4px, 0) scale(1) rotate(11deg);
 }
 
 .folder-mini-img {

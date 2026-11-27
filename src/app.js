@@ -443,18 +443,18 @@ function pickFolderPeekKeys(folder) {
     eligible.push(bm);
   }
 
-  // Prefer bookmarks with cached local covers so the fanned preview cards look rich
+  // Show 2 to 4 cached local covers in an angled fan; fall back to wireframe cards when fewer than 2
   const withThumb = eligible.filter((bm) => state.thumbMeta.has(bm.key));
-  const picks = withThumb.slice(0, 2).map((bm) => bm.key);
+  const picks = withThumb.slice(0, 4).map((bm) => bm.key);
   while (picks.length < 2) picks.push(null);
   return picks;
 }
 
-function buildMiniPeekCardHtml(sideClass, thumbKey) {
+function buildMiniPeekCardHtml(idx, thumbKey) {
   const keyAttr = thumbKey ? ` data-folder-thumb-key="${escapeHtml(thumbKey)}"` : '';
   const imgHtml = thumbKey ? `<img class="folder-mini-img" alt="" decoding="async" />` : '';
   return `
-    <div class="folder-mini-card ${sideClass}"${keyAttr}>
+    <div class="folder-mini-card" data-peek-idx="${idx}"${keyAttr}>
       <div class="folder-mini-wire">
         <div class="folder-mini-wire-head">
           <span class="folder-mini-wire-dots"><i></i><i></i></span>
@@ -598,7 +598,8 @@ function renderSidebar() {
     const isExpanded = state.expandedSidebarFolders.has(folder.id);
     const isActive = state.selectedFolderId === folder.id;
     const visual = getFolderVisualMeta(folder.title, isActive);
-    const [leftKey, rightKey] = pickFolderPeekKeys(folder);
+    const peekKeys = pickFolderPeekKeys(folder);
+    const peekCardsHtml = peekKeys.map((key, idx) => buildMiniPeekCardHtml(idx, key)).join('');
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -617,9 +618,8 @@ function renderSidebar() {
     btn.innerHTML = `
       <div class="folder-peek-slot" aria-hidden="true">
         <div class="folder-peek-inner">
-          <div class="folder-peek-stage">
-            ${buildMiniPeekCardHtml('is-left', leftKey)}
-            ${buildMiniPeekCardHtml('is-right', rightKey)}
+          <div class="folder-peek-stage" data-peek-count="${peekKeys.length}">
+            ${peekCardsHtml}
           </div>
         </div>
       </div>
@@ -1861,7 +1861,7 @@ function bindEvents() {
     });
   }
 
-  // Scroll separation for sticky borderless topbar
+  // Scroll separation for sticky borderless topbar & sidebar top fade mask
   window.addEventListener(
     'scroll',
     () => {
@@ -1870,6 +1870,14 @@ function bindEvents() {
     },
     { passive: true }
   );
+
+  if (els.sidebarScroll) {
+    const syncSidebarScrollMask = () => {
+      els.sidebarScroll.classList.toggle('is-scrolled', els.sidebarScroll.scrollTop > 2);
+    };
+    els.sidebarScroll.addEventListener('scroll', syncSidebarScrollMask, { passive: true });
+    syncSidebarScrollMask();
+  }
 
   // Brand home
   els.brandHome.addEventListener('click', (e) => {
