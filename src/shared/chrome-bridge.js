@@ -437,6 +437,8 @@ export async function loadPreferences() {
     launchOnStartup: false,
     launchOnShortcut: false,
     initialCapturePrompted: false,
+    bannerHintDismissed: false,
+    missingBannerSnoozeUntil: 0,
     favoriteKeys: [],
     blurredKeys: [],
     excludedFolderIds: null

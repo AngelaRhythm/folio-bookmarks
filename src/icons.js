@@ -259,5 +259,82 @@ export const ICONS = {
   close: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="M18 6l-12 12"/>
     <path d="M6 6l12 12"/>
+  </svg>`,
+
+  // Crisp vector keyboard modifier glyphs (Tabler / Apple HIG geometry)
+  keyCommand: `<svg class="kbd-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M7 9a2 2 0 1 1 2 -2v10a2 2 0 1 1 -2 -2h10a2 2 0 1 1 -2 2v-10a2 2 0 1 1 2 2h-10"/>
+  </svg>`,
+
+  keyOption: `<svg class="kbd-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M3 6h5.5l6.5 12h6"/>
+    <path d="M14.5 6h6.5"/>
+  </svg>`,
+
+  keyShift: `<svg class="kbd-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M12 4.5l7.5 8h-4.5v7h-6v-7h-4.5z"/>
+  </svg>`,
+
+  keyControl: `<svg class="kbd-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M6 15l6 -6l6 6"/>
   </svg>`
 };
+
+// Render any shortcut label (e.g. "⌘K", "⌥⇧F", "Alt+Shift+F", "Ctrl+T") as sculpted individual keycaps with crisp SVG modifiers
+export function renderShortcutKeycapsHtml(label, extraClass = '') {
+  const raw = String(label || '').trim();
+  const cls = extraClass ? `kbd-group ${extraClass}` : 'kbd-group';
+  if (!raw || raw === '未设置') {
+    return `<span class="${cls}"><kbd class="kbd-cap is-muted">未设置</kbd></span>`;
+  }
+
+  const tokens = [];
+  if (raw.includes('+')) {
+    for (const part of raw.split('+')) {
+      const p = part.trim();
+      if (p) tokens.push(p);
+    }
+  } else {
+    let i = 0;
+    while (i < raw.length) {
+      const ch = raw[i];
+      if (ch === '⌘' || ch === '⌥' || ch === '⇧' || ch === '⌃') {
+        tokens.push(ch);
+        i += 1;
+      } else {
+        const rest = raw.slice(i).trim();
+        if (rest) tokens.push(rest);
+        break;
+      }
+    }
+  }
+
+  const glyphMap = {
+    '⌘': ICONS.keyCommand,
+    'cmd': ICONS.keyCommand,
+    'command': ICONS.keyCommand,
+    'meta': ICONS.keyCommand,
+    '⌥': ICONS.keyOption,
+    'opt': ICONS.keyOption,
+    'option': ICONS.keyOption,
+    '⇧': ICONS.keyShift,
+    'shift': ICONS.keyShift,
+    '⌃': ICONS.keyControl
+  };
+
+  const escapeText = (s) =>
+    String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const caps = tokens
+    .map((tok) => {
+      const svg = glyphMap[tok.toLowerCase()] || glyphMap[tok];
+      if (svg) {
+        return `<kbd class="kbd-cap is-icon">${svg}</kbd>`;
+      }
+      const display = tok.length === 1 ? tok.toUpperCase() : tok;
+      return `<kbd class="kbd-cap">${escapeText(display)}</kbd>`;
+    })
+    .join('');
+
+  return `<span class="${cls}" aria-label="${escapeText(raw)}">${caps}</span>`;
+}

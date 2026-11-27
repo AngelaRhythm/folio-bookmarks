@@ -32,12 +32,15 @@ Folio 是一个**零构建、纯原生 ES Modules** 的 Chrome Extension（Manif
 | 文件 | 运行环境 | 核心职责 |
 | :--- | :--- | :--- |
 | `manifest.json` | 扩展清单 | 声明 `newtab.html` 覆写、工具栏 `action`、全局快捷键 `commands`、`src/background.js`（`type: "module"`）与最小必要权限 |
-| `newtab.html` | UI 线程 | 语义化页面骨架、早拦截脚本 `src/newtab-gate.js`、共享 OKLCH Nucleo Glass SVG `<defs>` 渐变、弹窗与右键菜单 DOM |
-| `styles/folio.css` | UI 线程 | 完整样式系统（OKLCH 浅/深双色 Token、布局、动效、悬浮滚动条、自定义指针样式） |
-| `src/newtab-gate.js` | UI 线程（`<head>`） | 新标签页启动方式闸门：当 `launchOnNewTab` 为 `false` 且非主动唤起时，首帧前隐藏页面并回退至 `chrome://new-tab-page/` |
-| `src/app.js` | UI 线程 | 前端状态管理、树模型解析、画廊渲染、实时联动、拖拽归类、Spotlight、设置、滚动条与自定义指针 |
-| `src/background.js` | Service Worker | 多入口启动调度（扩展图标/启动首页/全局快捷键与方案 A 切回）、本地被动截屏、重定向追踪、可选 Plan A 远程补齐队列与孤儿缓存清理 |
-| `src/icons.js` | UI 线程 | 双轨 SVG 图标注册表（左侧栏 Nucleo Glass + 其余全部 Tabler Icons） |
+| `newtab.html` | UI 线程 | 语义化页面骨架、早拦截脚本 `src/newtab-gate.js`、共享 OKLCH 与 Nucleo 原生黑白 SVG `<defs>` 渐变、统一状态横幅 `#batch-banner`、弹窗与右键菜单 DOM |
+| `welcome.html` | UI 线程（独立引导页） | 首次安装自动打开的一屏式可视化引导页（打开方式实时 Chrome 预览条、双视觉封面模式卡片、跳过封面胶囊、一键跳过与「开启 Folio」） |
+| `styles/folio.css` | UI 线程 | 完整样式系统（OKLCH 浅/深双色 Token、共享可视化偏好组件、矢量快捷键帽、布局、动效、悬浮滚动条、自定义指针样式） |
+| `styles/welcome.css` | UI 线程 | 独立引导页一屏舞台布局与响应式规则（复用 `folio.css` 中的浏览器预览、封面模式卡片与文件夹胶囊组件） |
+| `src/newtab-gate.js` | UI 线程（`<head>`） | 新标签页启动闸门与侧栏收起首帧守卫：支持 `?source=install` 主动放行，当 `launchOnNewTab` 为 `false` 且非主动唤起时零闪烁回退至 `chrome://new-tab-page/` |
+| `src/welcome.js` | UI 线程（独立引导页） | 引导页交互控制：读取本地书签树、联动迷你浏览器预览与封面模式卡片、持久化偏好并按需触发后台补齐后跳转画廊 |
+| `src/app.js` | UI 线程 | 前端状态管理、树模型解析、画廊渲染、统一多态横幅（进度/完成/轻量提示）、实时联动、拖拽排序与归类、Spotlight、与引导页对齐的右侧分屏设置、滚动条与自定义指针 |
+| `src/background.js` | Service Worker | 首次安装自动打开 `welcome.html`、多入口启动调度（扩展图标/启动首页/全局快捷键与方案 A 切回）、本地被动截屏、重定向追踪、可选 Plan A 远程补齐队列与孤儿缓存清理 |
+| `src/icons.js` | UI 线程 | 双轨 SVG 图标注册表（Nucleo Glass + Tabler Icons）与矢量修饰键帽渲染器 `renderShortcutKeycapsHtml()` |
 | `src/shared/chrome-bridge.js` | UI 线程 | `IS_EXTENSION` 适配层：扩展内走原生 `chrome.*`，HTTP 预览时无缝切换内存 Mock 树与 Canvas 封面 |
 | `src/shared/db.js` | UI & SW 共享 | IndexedDB（`folio_bookmark_gallery` / `thumbnails`）读写、统计与孤儿回收 |
 | `src/shared/url.js` | UI & SW 共享 | URL 规范化、内网/私有地址识别、`toSafePublicOrigin()` 脱敏、原生 favicon URL、色相哈希 |
@@ -60,7 +63,9 @@ Folio 是一个**零构建、纯原生 ES Modules** 的 Chrome Extension（Manif
 | `launchOnAction` | `boolean` | `true` | 是否允许点击浏览器工具栏扩展图标打开/切回 Folio（联动 `chrome.action.enable()/disable()`） |
 | `launchOnStartup` | `boolean` | `false` | 是否在 Chrome 冷启动（`chrome.runtime.onStartup`）时自动作为首页打开 Folio |
 | `launchOnShortcut` | `boolean` | `false` | 是否允许在任意网页通过全局快捷键（`Alt+Shift+F` / `⌥⇧F`）一键打开/切回 Folio |
-| `initialCapturePrompted` | `boolean` | `false` | 首次欢迎弹窗是否已展示过 |
+| `initialCapturePrompted` | `boolean` | `false` | 首次独立引导页（`welcome.html`）是否已完成或跳过 |
+| `bannerHintDismissed` | `boolean` | `false` | 顶部统一状态横幅中「纯本地模式首次空白」轻量提示是否已手动关闭 |
+| `missingBannerSnoozeUntil` | `number` | `0` | 顶部统一状态横幅中「暂缺公网封面」提示点击「忽略」后的静默截止时间戳（默认延后 30 天再次提醒；手动切换开启补齐或清空缓存时自动清零） |
 | `favoriteKeys` | `string[]` | `[]` | 顶部收藏条书签的 `normalizeUrl(url)` 列表（按收藏顺序） |
 | `blurredKeys` | `string[]` | `[]` | 手动开启高斯模糊隐藏封面的书签 `normalizeUrl(url)` 列表 |
 | `excludedFolderIds` | `string[] \| null` | `null` | 不获取封面的文件夹 ID 列表。首次启动为 `null` 时自动探测 `公司`/`工作`/`内网` 等目录并写入数组 |
@@ -113,7 +118,7 @@ Folio 是一个**零构建、纯原生 ES Modules** 的 Chrome Extension（Manif
    - 调用 `chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 88 })`，用 `OffscreenCanvas` 顶部锚定裁切为 `640×400` WebP 并以 `source: 'capture'` 落库，随后广播 `SCREENSHOT_UPDATED` 给所有打开的 Folio 新标签页即时热更新卡片封面。
 
 ### 3.3 可选远程封面补齐链路（默认关闭，Plan A 根域名脱敏）
-仅当用户在「设置 → 常规设置」中**主动打开「远程补齐封面」**（`remoteCoverEnabled: true`）后激活：
+仅当用户在独立引导页 `welcome.html` 或「设置 → 常规设置 → 封面获取」中**主动选择「补齐公网封面」**（`remoteCoverEnabled: true`）后激活：
 
 1. **五重硬门禁**：`enqueueSilentCapture`、`processSilentQueue`、`fetchSilentCoverForItem`、`onCreated`、`runPeriodicRefreshScan` 全部校验 `remoteCoverEnabled === true` 且 `meta && !meta.excluded`。
 2. **Plan A 严格脱敏（`toSafePublicOrigin(rawUrl)`）**：
@@ -145,7 +150,7 @@ Folio 是一个**零构建、纯原生 ES Modules** 的 Chrome Extension（Manif
 | `type` | 载荷 | 说明 |
 | :--- | :--- | :--- |
 | `SCREENSHOT_UPDATED` | `{ key, capturedAt, size, source }` | 通知页面局部刷新对应 `key` 的所有书签卡片与收藏条缩略图 |
-| `BATCH_PROGRESS` | `{ running, current, total, captured, failed, currentTitle }` | 实时更新顶部批处理进度条 `#batch-banner` |
+| `BATCH_PROGRESS` | `{ running, current, total, captured, failed, currentTitle }` | 实时驱动顶部多态横幅 `#batch-banner`（按优先级在抓取进度、完成反馈、纯本地首屏引导、暂缺封面 30 天可忽略提醒之间切换） |
 
 ---
 

@@ -957,8 +957,11 @@ async function bootstrapServiceWorker(pruneOrphans = false) {
 }
 
 // Initialize on install / startup / wake
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   bootstrapServiceWorker(false);
+  if (details?.reason === 'install') {
+    chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html'), active: true }).catch(() => {});
+  }
 });
 
 chrome.runtime.onStartup.addListener(async () => {

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>欢迎使用 Folio</title>
+  <link rel="stylesheet" href="styles/folio.css" />
+  <link rel="stylesheet" href="styles/welcome.css" />
+</head>
+<body class="welcome-body">
+  <!-- Shared OKLCH Nucleo Glass SVG definitions -->
+  <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden;" aria-hidden="true">
+    <defs>
+      <linearGradient id="ng-cobalt" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-indigo-hi)" />
+        <stop offset="100%" stop-color="var(--ok-indigo-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-work" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-blue-hi)" />
+        <stop offset="100%" stop-color="var(--ok-blue-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-slate" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-teal-hi)" />
+        <stop offset="100%" stop-color="var(--ok-teal-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-neutral" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-neutral-hi)" />
+        <stop offset="100%" stop-color="var(--ok-neutral-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-amber" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-amber-hi)" />
+        <stop offset="100%" stop-color="var(--ok-amber-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-violet" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-violet-hi)" />
+        <stop offset="100%" stop-color="var(--ok-violet-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-emerald" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-emerald-hi)" />
+        <stop offset="100%" stop-color="var(--ok-emerald-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-rose" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-rose-hi)" />
+        <stop offset="100%" stop-color="var(--ok-rose-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--ok-cyan-hi)" />
+        <stop offset="100%" stop-color="var(--ok-cyan-lo)" />
+      </linearGradient>
+      <linearGradient id="ng-glass-pane" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--glass-hi)" stop-opacity="0.74" />
+        <stop offset="100%" stop-color="var(--glass-lo)" stop-opacity="0.32" />
+      </linearGradient>
+      <linearGradient id="ng-glass-stroke" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--glass-rim-hi)" stop-opacity="0.72" />
+        <stop offset="100%" stop-color="var(--glass-rim-lo)" stop-opacity="0.14" />
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div class="welcome-shell">
+    <header class="welcome-topbar">
+      <div class="welcome-brand">
+        <span class="welcome-brand-mark" id="welcome-brand-mark" aria-hidden="true"></span>
+        <span class="welcome-brand-name">Folio</span>
+        <span class="welcome-sync-pill" id="welcome-sync-pill">
+          <span class="welcome-sync-dot" aria-hidden="true"></span>
+          <span id="welcome-sync-text">读取本地书签...</span>
+        </span>
+      </div>
+      <button type="button" class="text-action welcome-skip-btn" id="btn-welcome-skip">跳过</button>
+    </header>
+
+    <main class="welcome-stage">
+      <h1 class="welcome-title">配置你的 Folio</h1>
+
+      <div class="welcome-grid">
+        <!-- Left Panel: Compact Switches Above Live Visual Chrome Preview -->
+        <section class="welcome-panel" aria-labelledby="welcome-launch-heading">
+          <div class="welcome-panel-head">
+            <h2 class="welcome-panel-title" id="welcome-launch-heading">打开方式</h2>
+            <span class="welcome-panel-hint">至少 1 项</span>
+          </div>
+
+          <div class="welcome-switch-list" id="welcome-launch-list"></div>
+
+          <!-- Live Miniature Browser Diagram: lights up active launch points in real time -->
+          <div class="welcome-browser-mock" aria-hidden="true">
+            <div class="wbm-tabbar">
+              <span class="wbm-dots"><i></i><i></i><i></i></span>
+              <span class="wbm-tab is-home" id="mock-startup">
+                <span class="wbm-tab-dot"></span>
+                <span>首页</span>
+              </span>
+              <span class="wbm-tab is-newtab" id="mock-newtab">
+                <span class="wbm-tab-dot"></span>
+                <span>新标签页</span>
+              </span>
+            </div>
+            <div class="wbm-toolbar">
+              <span class="wbm-address">
+                <span class="wbm-shortcut-pill" id="mock-shortcut"></span>
+              </span>
+              <span class="wbm-action-icon" id="mock-action">
+                <span class="wbm-action-grid"><i></i><i></i><i></i><i></i></span>
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right Panel: Visual Cover Mode Cards + Interactive Folder Skip Chips -->
+        <section class="welcome-panel" aria-labelledby="welcome-cover-heading">
+          <div class="welcome-panel-head">
+            <h2 class="welcome-panel-title" id="welcome-cover-heading">封面获取</h2>
+            <span class="welcome-panel-hint" id="welcome-cover-hint">纯本地 · 零外发</span>
+          </div>
+
+          <div class="welcome-mode-cards" role="radiogroup" aria-label="封面获取方式">
+            <button type="button" class="welcome-mode-card is-selected" role="radio" aria-checked="true" data-cover-mode="local" id="mode-card-local">
+              <div class="wmc-preview is-local" aria-hidden="true">
+                <div class="wmc-wire-top"><i></i><i></i><i></i></div>
+                <div class="wmc-wire-icon"></div>
+                <div class="wmc-wire-line"></div>
+              </div>
+              <div class="wmc-foot">
+                <div class="wmc-title-row">
+                  <span class="welcome-mode-radio" aria-hidden="true"></span>
+                  <span class="welcome-mode-title">纯本地截取</span>
+                </div>
+                <span class="wmc-sub">浏览网页时本地截屏</span>
+              </div>
+            </button>
+
+            <button type="button" class="welcome-mode-card" role="radio" aria-checked="false" data-cover-mode="remote" id="mode-card-remote">
+              <div class="wmc-preview is-remote" aria-hidden="true">
+                <div class="wmc-shot-bar"></div>
+                <div class="wmc-shot-hero"></div>
+                <div class="wmc-shot-grid"><i></i><i></i><i></i></div>
+              </div>
+              <div class="wmc-foot">
+                <div class="wmc-title-row">
+                  <span class="welcome-mode-radio" aria-hidden="true"></span>
+                  <span class="welcome-mode-title">补齐公网封面</span>
+                </div>
+                <span class="wmc-sub" id="mode-remote-sub">仅按根域名补齐</span>
+              </div>
+            </button>
+          </div>
+
+          <div class="welcome-exclude-block">
+            <div class="welcome-exclude-head">
+              <span class="welcome-exclude-title">跳过封面</span>
+              <span class="welcome-exclude-note">内网默认跳过</span>
+            </div>
+            <div class="welcome-folder-chips" id="welcome-folder-chips"></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="welcome-actions">
+        <button type="button" class="primary-action welcome-cta" id="btn-welcome-finish">
+          <span id="welcome-cta-label">开启 Folio</span>
+          <span class="welcome-cta-arrow" id="welcome-cta-arrow" aria-hidden="true"></span>
+        </button>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="src/welcome.js"></script>
+</body>
+</html>

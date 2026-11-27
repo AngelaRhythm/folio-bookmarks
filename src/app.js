@@ -1,6 +1,6 @@
 // Folio — Minimalist Visual Bookmark Gallery App Controller
 
-import { ICONS } from './icons.js';
+import { ICONS, renderShortcutKeycapsHtml } from './icons.js';
 import { stopSearchShockwave, triggerSearchShockwave, warmShockwaveEngine } from './shockwave.js';
 import {
   getDisplayHost,
@@ -34,8 +34,9 @@ import {
   updateBookmark
 } from './shared/chrome-bridge.js';
 
-// New tag expires 72 hours after bookmark creation
+// New tag expires 72 hours after bookmark creation; missing-cover banner snoozes 30 days when dismissed
 const NEW_TAG_TTL_MS = 72 * 60 * 60 * 1000;
+const MISSING_BANNER_SNOOZE_MS = 30 * 24 * 60 * 60 * 1000;
 
 function isNewBookmark(bm) {
   if (!bm || !bm.dateAdded) return false;
@@ -55,6 +56,8 @@ const state = {
     launchOnStartup: false,
     launchOnShortcut: false,
     initialCapturePrompted: false,
+    bannerHintDismissed: false,
+    missingBannerSnoozeUntil: 0,
     favoriteKeys: [],
     blurredKeys: [],
     excludedFolderIds: null
@@ -75,8 +78,9 @@ const state = {
   objectUrlCache: new Map(), // normalizedUrl -> blob objectURL
   duplicates: [],
   batch: { running: false, current: 0, total: 0, captured: 0, failed: 0, currentTitle: '' },
+  bannerDone: null,        // { captured, failed } shown briefly right after a batch capture completes
   spotlight: { open: false, query: '', results: [], activeIndex: 0 },
-  tidy: { open: false, tab: 'settings', stats: { count: 0, totalBytes: 0 }, folderPickerOpen: false },
+  tidy: { open: false, tab: 'settings', stats: { count: 0, totalBytes: 0 } },
   dragBookmarkId: null,
   contextBookmarkId: null
 };
@@ -94,15 +98,14 @@ const els = {
   btnMobileMenu: document.getElementById('btn-mobile-menu'),
   btnOpenTidy: document.getElementById('btn-open-tidy'),
   btnTopbarSearch: document.getElementById('btn-topbar-search'),
-  btnStopBatch: document.getElementById('btn-stop-batch'),
-  onboardingOverlay: document.getElementById('onboarding-overlay'),
-  onboardingMark: document.getElementById('onboarding-mark'),
-  onboardingDesc: document.getElementById('onboarding-desc'),
-  btnOnboardingStart: document.getElementById('btn-onboarding-start'),
   topbar: document.getElementById('topbar'),
   batchBanner: document.getElementById('batch-banner'),
+  batchBannerIndicator: document.getElementById('batch-banner-indicator'),
   batchBannerText: document.getElementById('batch-banner-text'),
+  batchBarTrack: document.getElementById('batch-bar-track'),
   batchBarFill: document.getElementById('batch-bar-fill'),
+  btnBannerPrimary: document.getElementById('btn-banner-primary'),
+  btnBannerSecondary: document.getElementById('btn-banner-secondary'),
   subfolderBar: document.getElementById('subfolder-bar'),
   galleryRoot: document.getElementById('gallery-root'),
   galleryFooter: document.getElementById('gallery-footer'),
@@ -392,7 +395,9 @@ function parseBookmarkTree(tree) {
 const systemDarkQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
 function applyTheme() {
-  document.documentElement.setAttribute('data-theme', systemDarkQuery.matches ? 'dark' : 'light');
+  const forced = new URLSearchParams(window.location.search).get('theme');
+  const theme = forced === 'dark' || forced === 'light' ? forced : systemDarkQuery.matches ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', theme);
   updateCustomCursorTheme();
 }
 
@@ -1078,17 +1083,108 @@ function renderGallery(options = {}) {
   root.appendChild(grid);
 }
 
-// --- Batch Capture Banner ---
+// --- Unified Smart Status Banner (Progress + Completion + Lightweight Onboarding Guide) ---
+let bannerDoneTimer = 0;
+
+function clearBannerDone() {
+  clearTimeout(bannerDoneTimer);
+  bannerDoneTimer = 0;
+  state.bannerDone = null;
+}
+
+function getCapturablePublicBookmarks() {
+  const seen = new Set();
+  const list = [];
+  for (const b of state.allBookmarks) {
+    if (!b || seen.has(b.key)) continue;
+    if (isBookmarkExcludedFromCover(b) || !toSafePublicOrigin(b.url)) continue;
+    seen.add(b.key);
+    list.push(b);
+  }
+  return list;
+}
+
 function renderBatchBanner() {
+  if (!els.batchBanner) return;
   const b = state.batch;
-  if (!b.running) {
-    els.batchBanner.hidden = true;
+
+  // State 1: Actively capturing remote covers (highest priority)
+  if (b.running) {
+    els.batchBanner.hidden = false;
+    els.batchBanner.dataset.state = 'capturing';
+    els.batchBannerIndicator.innerHTML = `<span class="batch-spinner"></span>`;
+    const pct = b.total > 0 ? Math.round((b.current / b.total) * 100) : 0;
+    els.batchBannerText.textContent = `正在静默补齐首屏 (${b.current}/${b.total}) · ${b.currentTitle || ''}`;
+    els.batchBarTrack.hidden = false;
+    els.batchBarFill.style.width = `${pct}%`;
+    els.btnBannerPrimary.hidden = true;
+    els.btnBannerSecondary.hidden = false;
+    els.btnBannerSecondary.dataset.bannerAction = 'stop-batch';
+    els.btnBannerSecondary.textContent = '停止';
     return;
   }
-  els.batchBanner.hidden = false;
-  const pct = b.total > 0 ? Math.round((b.current / b.total) * 100) : 0;
-  els.batchBannerText.textContent = `正在捕捉首屏 (${b.current}/${b.total}) · ${b.currentTitle || ''}`;
-  els.batchBarFill.style.width = `${pct}%`;
+
+  // State 2: Brief completion confirmation right after batch finishes
+  if (state.bannerDone) {
+    els.batchBanner.hidden = false;
+    els.batchBanner.dataset.state = 'done';
+    els.batchBannerIndicator.innerHTML = `<span class="batch-status-dot is-success"></span>`;
+    els.batchBannerText.textContent = `已完成本次封面补齐（更新 ${state.bannerDone.captured} 张），后续浏览网页时将自动本地刷新`;
+    els.batchBarTrack.hidden = true;
+    els.btnBannerPrimary.hidden = true;
+    els.btnBannerSecondary.hidden = false;
+    els.btnBannerSecondary.dataset.bannerAction = 'dismiss-done';
+    els.btnBannerSecondary.textContent = '知道了';
+    return;
+  }
+
+  const publicBms = getCapturablePublicBookmarks();
+  const coveredPublicCount = publicBms.filter((bm) => state.thumbMeta.has(bm.key)).length;
+  const missingPublic = publicBms.filter((bm) => !state.thumbMeta.has(bm.key));
+
+  // State 3: Pure-local zero-cover lightweight guide (auto-disappears forever once 1st local cover is captured)
+  if (
+    !state.prefs.remoteCoverEnabled &&
+    !state.prefs.bannerHintDismissed &&
+    publicBms.length > 0 &&
+    coveredPublicCount === 0
+  ) {
+    els.batchBanner.hidden = false;
+    els.batchBanner.dataset.state = 'local-empty';
+    els.batchBannerIndicator.innerHTML = `<span class="batch-status-dot"></span>`;
+    els.batchBannerText.textContent = '当前为纯本地模式：点开任意书签浏览约 2 秒即可本地生成首屏封面';
+    els.batchBarTrack.hidden = true;
+    els.btnBannerPrimary.hidden = false;
+    els.btnBannerPrimary.dataset.bannerAction = 'enable-and-backfill';
+    els.btnBannerPrimary.textContent = '补齐公网封面';
+    els.btnBannerSecondary.hidden = false;
+    els.btnBannerSecondary.dataset.bannerAction = 'dismiss-local-hint';
+    els.btnBannerSecondary.textContent = '知道了';
+    return;
+  }
+
+  // State 4: Remote cover enabled with remaining missing public covers (respects 30-day snooze)
+  if (
+    state.prefs.remoteCoverEnabled &&
+    Date.now() >= (Number(state.prefs.missingBannerSnoozeUntil) || 0) &&
+    missingPublic.length > 0
+  ) {
+    els.batchBanner.hidden = false;
+    els.batchBanner.dataset.state = 'remote-missing';
+    els.batchBannerIndicator.innerHTML = `<span class="batch-status-dot"></span>`;
+    els.batchBannerText.textContent = `还有 ${missingPublic.length} 个公网书签暂缺首屏封面（仅按根域名补齐）`;
+    els.batchBarTrack.hidden = true;
+    els.btnBannerPrimary.hidden = false;
+    els.btnBannerPrimary.dataset.bannerAction = 'start-backfill';
+    els.btnBannerPrimary.textContent = '立即补齐';
+    els.btnBannerSecondary.hidden = false;
+    els.btnBannerSecondary.dataset.bannerAction = 'dismiss-missing-hint';
+    els.btnBannerSecondary.textContent = '忽略';
+    return;
+  }
+
+  els.batchBanner.hidden = true;
+  els.batchBanner.dataset.state = 'hidden';
 }
 
 function rebuildExcludedKeySet() {
@@ -1115,50 +1211,16 @@ function isBookmarkExcludedFromCover(bm) {
   return excludedSet.has(bm.topFolderId) || excludedSet.has(bm.parentId);
 }
 
-// --- First-Time Local Welcome Prompt ---
 function getMissingCapturableBookmarks() {
   return state.allBookmarks.filter(
     (b) => !isBookmarkExcludedFromCover(b) && Boolean(toSafePublicOrigin(b.url)) && !state.thumbMeta.has(b.key)
   );
 }
 
-function maybeShowOnboardingPrompt() {
-  const forcePreview = new URLSearchParams(window.location.search).get('onboarding') === '1';
-  if (!forcePreview && (state.prefs.initialCapturePrompted || state.batch.running)) return;
-  if (state.allBookmarks.length === 0) return;
-
-  const folderCount = state.topFolders.length;
-  const excludedNames = state.topFolders
-    .filter((f) => (state.prefs.excludedFolderIds || []).includes(f.id))
-    .map((f) => `「${f.title}」`)
-    .join('、');
-  const skipNote = excludedNames ? `，已自动跳过 ${excludedNames} 等内网分组` : '';
-
-  els.onboardingDesc.textContent = `已本地同步 ${folderCount} 个文件夹、共 ${state.allBookmarks.length} 个书签${skipNote}。默认纯本地运行，绝不外发任何书签地址；日常点开网页时会自动在本地截取真实首屏。`;
-  els.btnOnboardingStart.textContent = '开始使用';
-  els.onboardingOverlay.hidden = false;
-  els.onboardingOverlay.setAttribute('aria-hidden', 'false');
-  els.app.classList.add('is-spotlight-open');
-  syncScrollLock();
-}
-
-function closeOnboardingPrompt() {
-  if (els.onboardingOverlay.hidden) return;
-  els.onboardingOverlay.hidden = true;
-  els.onboardingOverlay.setAttribute('aria-hidden', 'true');
-  els.app.classList.remove('is-spotlight-open');
-  syncScrollLock();
-  if (!state.prefs.initialCapturePrompted) {
-    state.prefs.initialCapturePrompted = true;
-    savePreferences({ initialCapturePrompted: true });
-  }
-}
-
 // --- Spotlight Search ---
 function syncScrollLock() {
   const locked = Boolean(
     state.spotlight.open ||
-      !els.onboardingOverlay.hidden ||
       (els.editBookmarkOverlay && !els.editBookmarkOverlay.hidden)
   );
   document.documentElement.classList.toggle('is-scroll-locked', locked);
@@ -1281,7 +1343,6 @@ async function openTidyDrawer(defaultTab = 'settings') {
 function closeTidyDrawer() {
   suppressOverlayScrollbars(340);
   state.tidy.open = false;
-  state.tidy.folderPickerOpen = false;
   els.settingsPane.classList.remove('is-open');
   els.settingsPane.setAttribute('aria-hidden', 'true');
   els.btnOpenTidy.classList.remove('is-active');
@@ -1366,11 +1427,13 @@ function renderTidyContent() {
     return;
   }
 
-  // Tab 1: General & Cache Settings (Minimalist UI-first copy)
+  // Tab 1: General & Cache Settings (Visual-first, aligned 1:1 with welcome.html)
+  const prevScrollTop = container.scrollTop;
   const excludedSet = new Set(state.prefs.excludedFolderIds || []);
-  const excludedFolders = state.topFolders.filter((f) => excludedSet.has(f.id));
-  const availableFolders = state.topFolders.filter((f) => !excludedSet.has(f.id));
   const missingPublicCount = getMissingCapturableBookmarks().length;
+  const isRemote = Boolean(state.prefs.remoteCoverEnabled);
+  const isMac = /mac/i.test(navigator.platform || navigator.userAgent || '');
+  const newTabKey = isMac ? '⌘T' : 'Ctrl+T';
 
   const cadenceOptions = [
     { value: 7, label: '每周', sub: '7 天' },
@@ -1393,61 +1456,27 @@ function renderTidyContent() {
     })
     .join('');
 
-  const excludedChipsHtml =
-    excludedFolders.length > 0
-      ? excludedFolders
-          .map(
-            (f) => `
-          <span class="excluded-folder-chip">
-            <span class="excluded-folder-icon">${getSidebarFolderIcon(f.title, false)}</span>
-            <span>${escapeHtml(f.title)}</span>
-            <button type="button" class="excluded-folder-remove" data-remove-excluded="${escapeHtml(f.id)}" title="取消屏蔽「${escapeHtml(f.title)}」" aria-label="移出不获取封面列表">${ICONS.close}</button>
-          </span>
-        `
-          )
+  const folderChipsHtml =
+    state.topFolders.length > 0
+      ? state.topFolders
+          .map((f) => {
+            const excluded = excludedSet.has(f.id);
+            return `
+              <button type="button" class="welcome-folder-chip${excluded ? ' is-excluded' : ''}" data-toggle-excluded="${escapeHtml(f.id)}" aria-pressed="${excluded ? 'true' : 'false'}" title="${excluded ? `已跳过「${escapeHtml(f.title)}」` : `点击跳过「${escapeHtml(f.title)}」`}">
+                <span class="welcome-folder-chip-icon" aria-hidden="true">${getSidebarFolderIcon(f.title, false)}</span>
+                <span>${escapeHtml(f.title)}</span>
+                ${excluded ? `<span class="welcome-folder-chip-eye" aria-hidden="true">${ICONS.eyeOff}</span>` : ''}
+              </button>
+            `;
+          })
           .join('')
-      : `<span class="excluded-empty">暂无</span>`;
-
-  const pickerMenuHtml =
-    state.tidy.folderPickerOpen && availableFolders.length > 0
-      ? `
-        <div class="add-folder-menu" role="listbox" aria-label="选择文件夹">
-          ${availableFolders
-            .map(
-              (f) => `
-            <button type="button" class="add-folder-option" data-add-excluded="${escapeHtml(f.id)}">
-              ${getSidebarFolderIcon(f.title, false)}
-              <span>${escapeHtml(f.title)}</span>
-            </button>
-          `
-            )
-            .join('')}
-        </div>
-      `
-      : '';
+      : `<span class="excluded-empty">暂无书签文件夹</span>`;
 
   const launchModes = [
-    {
-      key: 'launchOnNewTab',
-      title: '新标签页打开',
-      desc: '新建标签页时自动展示 Folio'
-    },
-    {
-      key: 'launchOnAction',
-      title: '点击扩展图标',
-      desc: '点击工具栏图标打开或切回已开页面'
-    },
-    {
-      key: 'launchOnStartup',
-      title: '启动浏览器时',
-      desc: '启动 Chrome 时自动作为首页打开'
-    },
-    {
-      key: 'launchOnShortcut',
-      title: '全局快捷键',
-      desc: '在任意网页一键切回或打开 Folio',
-      shortcut: state.openShortcutLabel
-    }
+    { key: 'launchOnNewTab', title: '新标签页', kbd: newTabKey },
+    { key: 'launchOnAction', title: '工具栏图标' },
+    { key: 'launchOnStartup', title: '浏览器首页' },
+    { key: 'launchOnShortcut', title: '全局快捷键', kbd: state.openShortcutLabel, editable: true }
   ];
 
   const enabledLaunchCount = launchModes.filter((m) => Boolean(state.prefs[m.key])).length;
@@ -1456,81 +1485,129 @@ function renderTidyContent() {
     .map((m) => {
       const checked = Boolean(state.prefs[m.key]);
       const locked = checked && enabledLaunchCount <= 1;
-      const titleInner = m.shortcut
-        ? `<span class="setting-title-inline"><span class="settings-item-title">${m.title}</span><kbd class="setting-kbd">${escapeHtml(m.shortcut)}</kbd><button type="button" class="setting-inline-link" id="btn-edit-shortcut">改键</button></span>`
-        : `<span class="settings-item-title">${m.title}</span>`;
+      const kbdHtml = m.kbd ? renderShortcutKeycapsHtml(m.kbd) : '';
+      const editHtml = m.editable
+        ? `<button type="button" class="setting-inline-link" id="btn-edit-shortcut">改键</button>`
+        : '';
       return `
-        <div class="settings-item-row">
-          <div class="settings-item-main">
-            ${titleInner}
-            <span class="settings-item-desc">${m.desc}</span>
-          </div>
+        <div class="settings-switch-row">
+          <span class="setting-title-inline">
+            <span class="settings-item-title">${m.title}</span>
+            ${kbdHtml}
+            ${editHtml}
+          </span>
           <button type="button" class="setting-switch${locked ? ' is-locked' : ''}" role="switch" aria-checked="${checked ? 'true' : 'false'}" aria-disabled="${locked ? 'true' : 'false'}" data-launch-pref="${m.key}" aria-label="${m.title}"></button>
         </div>
       `;
     })
     .join('');
 
+  const remoteSubText =
+    missingPublicCount > 0 ? `待补齐 ${missingPublicCount} 个站点` : '仅按根域名补齐';
+
   container.innerHTML = `
     <section class="settings-card">
       <div class="settings-card-head">
-        <h3 class="settings-card-title">启动方式</h3>
+        <h3 class="settings-card-title">打开方式</h3>
+        <button type="button" class="text-action is-accent" id="btn-open-welcome">初始引导</button>
       </div>
-      <p class="settings-card-hint">可多选或全开，至少保留一项</p>
 
       <div class="settings-subcard-list">
         ${launchRowsHtml}
       </div>
+
+      <div class="welcome-browser-mock" aria-hidden="true">
+        <div class="wbm-tabbar">
+          <span class="wbm-dots"><i></i><i></i><i></i></span>
+          <span class="wbm-tab is-home${state.prefs.launchOnStartup ? ' is-on' : ''}">
+            <span class="wbm-tab-dot"></span>
+            <span>首页</span>
+          </span>
+          <span class="wbm-tab is-newtab${state.prefs.launchOnNewTab ? ' is-on' : ''}">
+            <span class="wbm-tab-dot"></span>
+            <span>新标签页</span>
+          </span>
+        </div>
+        <div class="wbm-toolbar">
+          <span class="wbm-address">
+            <span class="wbm-shortcut-pill${state.prefs.launchOnShortcut ? ' is-on' : ''}">
+              ${renderShortcutKeycapsHtml(state.openShortcutLabel, 'is-mini')}
+            </span>
+          </span>
+          <span class="wbm-action-icon${state.prefs.launchOnAction ? ' is-on' : ''}">
+            <span class="wbm-action-grid"><i></i><i></i><i></i><i></i></span>
+          </span>
+        </div>
+      </div>
     </section>
 
     <section class="settings-card">
       <div class="settings-card-head">
-        <h3 class="settings-card-title">封面更新</h3>
+        <h3 class="settings-card-title">封面获取</h3>
+        <span class="settings-card-meta">${isRemote ? '仅发根域名 · 无路径参数' : '纯本地 · 零外发'}</span>
+      </div>
+
+      <div class="welcome-mode-cards" role="radiogroup" aria-label="封面获取方式">
+        <button type="button" class="welcome-mode-card${!isRemote ? ' is-selected' : ''}" role="radio" aria-checked="${!isRemote ? 'true' : 'false'}" data-settings-cover-mode="local">
+          <div class="wmc-preview is-local" aria-hidden="true">
+            <div class="wmc-wire-top"><i></i><i></i><i></i></div>
+            <div class="wmc-wire-icon"></div>
+            <div class="wmc-wire-line"></div>
+          </div>
+          <div class="wmc-foot">
+            <div class="wmc-title-row">
+              <span class="welcome-mode-radio" aria-hidden="true"></span>
+              <span class="welcome-mode-title">纯本地截取</span>
+            </div>
+            <span class="wmc-sub">浏览网页时本地截屏</span>
+          </div>
+        </button>
+
+        <button type="button" class="welcome-mode-card${isRemote ? ' is-selected' : ''}" role="radio" aria-checked="${isRemote ? 'true' : 'false'}" data-settings-cover-mode="remote">
+          <div class="wmc-preview is-remote" aria-hidden="true">
+            <div class="wmc-shot-bar"></div>
+            <div class="wmc-shot-hero"></div>
+            <div class="wmc-shot-grid"><i></i><i></i><i></i></div>
+          </div>
+          <div class="wmc-foot">
+            <div class="wmc-title-row">
+              <span class="welcome-mode-radio" aria-hidden="true"></span>
+              <span class="welcome-mode-title">补齐公网封面</span>
+            </div>
+            <span class="wmc-sub">${remoteSubText}</span>
+          </div>
+        </button>
       </div>
 
       <div class="settings-subcard-list">
-        <div class="settings-item-row">
-          <div class="settings-item-main">
-            <span class="settings-item-title">浏览时本地截屏</span>
-            <span class="settings-item-desc">打开书签时本地截取，不外发地址</span>
-          </div>
-          <button type="button" class="setting-switch" role="switch" aria-checked="${state.prefs.autoCapture ? 'true' : 'false'}" id="switch-auto-capture" aria-label="浏览时本地截屏"></button>
+        <div class="settings-switch-row">
+          <span class="settings-item-title">浏览时自动截屏</span>
+          <button type="button" class="setting-switch" role="switch" aria-checked="${state.prefs.autoCapture ? 'true' : 'false'}" id="switch-auto-capture" aria-label="浏览时自动截屏"></button>
         </div>
-        <div class="settings-item-row">
-          <div class="settings-item-main">
-            <span class="settings-item-title">远程补齐封面</span>
-            <span class="settings-item-desc">仅向 mShots 发送根域名，不含路径参数</span>
+        <div class="settings-cadence-block">
+          <span class="settings-cadence-label">刷新周期</span>
+          <div class="radio-group" role="radiogroup" aria-label="刷新周期">
+            ${radioHtml}
           </div>
-          <button type="button" class="setting-switch" role="switch" aria-checked="${state.prefs.remoteCoverEnabled ? 'true' : 'false'}" id="switch-remote-cover" aria-label="远程补齐封面"></button>
-        </div>
-      </div>
-
-      <div class="settings-subcard">
-        <span class="settings-item-title">刷新周期</span>
-        <div class="radio-group" role="radiogroup" aria-label="刷新周期">
-          ${radioHtml}
         </div>
       </div>
     </section>
 
     <section class="settings-card">
       <div class="settings-card-head">
-        <h3 class="settings-card-title">不获取封面</h3>
+        <h3 class="settings-card-title">跳过封面</h3>
+        <span class="settings-card-meta">内网默认跳过</span>
       </div>
-      <p class="settings-card-hint">仅显示图标，内网默认跳过</p>
 
-      <div class="settings-subcard">
-        <div class="excluded-folder-chips">
-          ${excludedChipsHtml}
-          ${availableFolders.length > 0 ? `<button type="button" class="add-folder-btn" id="btn-toggle-folder-picker">${ICONS.plus}<span>添加文件夹</span></button>` : ''}
-        </div>
-        ${pickerMenuHtml}
+      <div class="welcome-folder-chips">
+        ${folderChipsHtml}
       </div>
     </section>
 
     <section class="settings-card">
       <div class="settings-card-head">
         <h3 class="settings-card-title">本地缓存</h3>
+        <span class="settings-card-meta">仅存图片 · 不影响书签</span>
       </div>
 
       <div class="settings-stat-grid">
@@ -1545,32 +1622,27 @@ function renderTidyContent() {
       </div>
 
       <div class="settings-subcard-list">
-        ${state.prefs.remoteCoverEnabled && missingPublicCount > 0 ? `
-        <div class="settings-item-row">
-          <div class="settings-item-main">
-            <span class="settings-item-title">补齐封面</span>
-            <span class="settings-item-desc">${missingPublicCount} 个待补齐</span>
-          </div>
-          <button type="button" class="text-action is-accent tidy-row-action" id="btn-silent-backfill">补齐</button>
+        ${isRemote && missingPublicCount > 0 ? `
+        <div class="settings-switch-row">
+          <span class="setting-title-inline">
+            <span class="settings-item-title">补齐公网封面</span>
+            <span class="settings-count-pill">${missingPublicCount}</span>
+          </span>
+          <button type="button" class="text-action is-accent tidy-row-action" id="btn-silent-backfill">立即补齐</button>
         </div>
         ` : ''}
-        <div class="settings-item-row">
-          <div class="settings-item-main">
-            <span class="settings-item-title">清理失效缓存</span>
-            <span class="settings-item-desc">删除已移除书签的残留图片</span>
-          </div>
+        <div class="settings-switch-row">
+          <span class="settings-item-title">清理失效缓存</span>
           <button type="button" class="text-action is-accent tidy-row-action" id="btn-prune-cache">清理</button>
         </div>
-        <div class="settings-item-row">
-          <div class="settings-item-main">
-            <span class="settings-item-title">清空全部缓存</span>
-            <span class="settings-item-desc">仅删除本地图片，不影响书签</span>
-          </div>
+        <div class="settings-switch-row">
+          <span class="settings-item-title">清空全部缓存</span>
           <button type="button" class="text-action is-danger tidy-row-action" id="btn-clear-cache">清空</button>
         </div>
       </div>
     </section>
   `;
+  container.scrollTop = prevScrollTop;
 }
 
 // --- Move-to-Folder Popover ---
@@ -1817,6 +1889,7 @@ async function refreshAllData(options = {}) {
     state.tidy.stats = await getStorageStats();
     renderTidyContent();
   }
+  renderBatchBanner();
 }
 
 function scheduleRefreshAllData() {
@@ -1831,7 +1904,6 @@ function scheduleRefreshAllData() {
 function bindEvents() {
   // Static icons hydration
   document.querySelector('.brand-mark').innerHTML = ICONS.brand;
-  if (els.onboardingMark) els.onboardingMark.innerHTML = ICONS.brand;
   els.btnCollapseSidebar.innerHTML = `
     <span class="sidebar-toggle-icon is-collapse" aria-hidden="true">${ICONS.sidebarCollapse}</span>
     <span class="sidebar-toggle-icon is-brand" aria-hidden="true">${ICONS.brand}</span>
@@ -1843,6 +1915,11 @@ function bindEvents() {
   document.getElementById('icon-topbar-settings').innerHTML = ICONS.settings;
   document.getElementById('icon-topbar-search').innerHTML = ICONS.search;
   document.getElementById('icon-spotlight-search').innerHTML = ICONS.search;
+  const searchKeyEl = document.querySelector('.search-trigger-key');
+  if (searchKeyEl) {
+    const isMac = /mac/i.test(navigator.platform || navigator.userAgent || '');
+    searchKeyEl.innerHTML = renderShortcutKeycapsHtml(isMac ? '⌘K' : 'Ctrl+K');
+  }
   const setIcon = (id, svg) => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = svg;
@@ -2888,18 +2965,53 @@ function bindEvents() {
     }
   });
 
-  // First-time local welcome modal action
-  els.btnOnboardingStart.addEventListener('click', () => {
-    closeOnboardingPrompt();
+  // Unified Smart Status Strip Actions (progress stop / completion dismiss / onboarding guide actions)
+  const handleBannerAction = async (action) => {
+    if (action === 'stop-batch') {
+      sendBackgroundMessage({ type: 'STOP_BATCH_CAPTURE' });
+      state.batch.running = false;
+      clearBannerDone();
+      renderBatchBanner();
+      showToast('已停止封面补齐，后续浏览网页时将自动本地截屏');
+    } else if (action === 'dismiss-done') {
+      clearBannerDone();
+      renderBatchBanner();
+    } else if (action === 'enable-and-backfill') {
+      state.prefs.remoteCoverEnabled = true;
+      state.prefs.bannerHintDismissed = true;
+      await savePreferences({ remoteCoverEnabled: true, bannerHintDismissed: true });
+      const missing = getMissingCapturableBookmarks();
+      if (missing.length > 0) {
+        sendBackgroundMessage({ type: 'START_BATCH_CAPTURE', items: missing, force: false });
+      }
+      if (state.tidy.open) renderTidyContent();
+      renderBatchBanner();
+      showToast(`已开启公网根域名补齐（共 ${missing.length} 个站点）`);
+    } else if (action === 'start-backfill') {
+      const missing = getMissingCapturableBookmarks();
+      if (missing.length > 0) {
+        sendBackgroundMessage({ type: 'START_BATCH_CAPTURE', items: missing, force: false });
+        showToast(`已开始按根域名补齐（${missing.length} 个站点）`);
+      }
+      renderBatchBanner();
+    } else if (action === 'dismiss-local-hint') {
+      state.prefs.bannerHintDismissed = true;
+      await savePreferences({ bannerHintDismissed: true });
+      renderBatchBanner();
+    } else if (action === 'dismiss-missing-hint') {
+      const snoozeUntil = Date.now() + MISSING_BANNER_SNOOZE_MS;
+      state.prefs.missingBannerSnoozeUntil = snoozeUntil;
+      await savePreferences({ missingBannerSnoozeUntil: snoozeUntil });
+      renderBatchBanner();
+    }
+  };
+
+  els.btnBannerPrimary?.addEventListener('click', () => {
+    handleBannerAction(els.btnBannerPrimary.dataset.bannerAction);
   });
 
-  els.onboardingOverlay.addEventListener('click', (e) => {
-    if (e.target === els.onboardingOverlay) closeOnboardingPrompt();
-  });
-
-  els.btnStopBatch.addEventListener('click', () => {
-    sendBackgroundMessage({ type: 'STOP_BATCH_CAPTURE' });
-    showToast('已停止首屏捕捉，后续浏览时将自动无感补齐');
+  els.btnBannerSecondary?.addEventListener('click', () => {
+    handleBannerAction(els.btnBannerSecondary.dataset.bannerAction);
   });
 
   // Move Popover selection & outside click close
@@ -3142,6 +3254,12 @@ function bindEvents() {
       return;
     }
 
+    // 1a. Open dedicated onboarding page
+    if (e.target.closest('#btn-open-welcome')) {
+      window.location.href = 'welcome.html';
+      return;
+    }
+
     // 1b. Open Chrome extension shortcut configuration page
     if (e.target.closest('#btn-edit-shortcut')) {
       const opened = await openExtensionShortcutsPage();
@@ -3161,7 +3279,7 @@ function bindEvents() {
       const activeCount = launchKeys.filter((k) => Boolean(state.prefs[k])).length;
 
       if (currentVal && activeCount <= 1) {
-        showToast('至少保留一种启动方式，避免无法打开 Folio');
+        showToast('至少保留一种打开方式');
         return;
       }
 
@@ -3171,12 +3289,12 @@ function bindEvents() {
       renderTidyContent();
 
       const feedback = {
-        launchOnNewTab: nextVal ? '已开启：新建标签页时展示 Folio' : '已关闭新标签页展示，下一次新开页签生效',
-        launchOnAction: nextVal ? '已开启：点击工具栏图标打开 Folio' : '已关闭扩展图标启动',
-        launchOnStartup: nextVal ? '已开启：启动浏览器时自动打开 Folio' : '已关闭启动浏览器自动打开',
-        launchOnShortcut: nextVal ? `已开启全局快捷键 (${state.openShortcutLabel})` : '已关闭全局快捷键打开'
+        launchOnNewTab: nextVal ? '已开启新标签页打开' : '已关闭新标签页打开',
+        launchOnAction: nextVal ? '已开启工具栏图标' : '已关闭工具栏图标',
+        launchOnStartup: nextVal ? '已开启浏览器首页' : '已关闭浏览器首页',
+        launchOnShortcut: nextVal ? `已开启快捷键 (${state.openShortcutLabel})` : '已关闭全局快捷键'
       };
-      showToast(feedback[key] || '已更新启动方式');
+      showToast(feedback[key] || '已更新打开方式');
       return;
     }
 
@@ -3188,56 +3306,38 @@ function bindEvents() {
       return;
     }
 
-    // 2b. Toggle opt-in remote cover fetch (Plan A origin-only, default OFF)
-    if (e.target.closest('#switch-remote-cover')) {
-      state.prefs.remoteCoverEnabled = !state.prefs.remoteCoverEnabled;
-      await savePreferences({ remoteCoverEnabled: state.prefs.remoteCoverEnabled });
-      if (!state.prefs.remoteCoverEnabled) {
+    // 2b. Switch visual cover mode card (local vs opt-in remote origin-only)
+    const modeCard = e.target.closest('[data-settings-cover-mode]');
+    if (modeCard) {
+      const nextRemote = modeCard.dataset.settingsCoverMode === 'remote';
+      if (Boolean(state.prefs.remoteCoverEnabled) === nextRemote) return;
+      state.prefs.remoteCoverEnabled = nextRemote;
+      if (!nextRemote) {
+        await savePreferences({ remoteCoverEnabled: false });
         sendBackgroundMessage({ type: 'STOP_BATCH_CAPTURE' });
-        showToast('已关闭远程补齐，仅保留本地截屏');
+        clearBannerDone();
+        showToast('已切为纯本地截取');
       } else {
-        showToast('已开启远程补齐（仅发送公网根域名）');
+        state.prefs.missingBannerSnoozeUntil = 0;
+        await savePreferences({ remoteCoverEnabled: true, missingBannerSnoozeUntil: 0 });
+        showToast('已开启公网封面补齐（仅发根域名）');
       }
       const prevY = window.scrollY;
       renderTidyContent();
       renderGallery();
+      renderBatchBanner();
       if (prevY > 0) requestAnimationFrame(() => window.scrollTo(0, prevY));
       return;
     }
 
-    // 3. Toggle add-excluded-folder picker
-    if (e.target.closest('#btn-toggle-folder-picker')) {
-      state.tidy.folderPickerOpen = !state.tidy.folderPickerOpen;
-      renderTidyContent();
-      return;
-    }
-
-    // 4. Add folder to "不获取封面" (hides & skips covers immediately)
-    const addExclBtn = e.target.closest('[data-add-excluded]');
-    if (addExclBtn) {
-      const fid = addExclBtn.dataset.addExcluded;
+    // 3. Direct 1-click toggle folder in "跳过封面" (matches welcome.html chips)
+    const toggleExclBtn = e.target.closest('[data-toggle-excluded]');
+    if (toggleExclBtn) {
+      const fid = toggleExclBtn.dataset.toggleExcluded;
       const set = new Set(state.prefs.excludedFolderIds || []);
-      set.add(fid);
-      state.prefs.excludedFolderIds = Array.from(set);
-      state.tidy.folderPickerOpen = false;
-      rebuildExcludedKeySet();
-      await savePreferences({ excludedFolderIds: state.prefs.excludedFolderIds });
-      const prevY = window.scrollY;
-      renderSidebar();
-      renderTidyContent();
-      renderGallery();
-      if (prevY > 0) requestAnimationFrame(() => window.scrollTo(0, prevY));
-      const folderTitle = state.folderMap.get(fid)?.title || '';
-      showToast(`已将「${folderTitle}」加入不获取封面`);
-      return;
-    }
-
-    // 5. Remove folder from "不获取封面" (restores covers immediately)
-    const rmExclBtn = e.target.closest('[data-remove-excluded]');
-    if (rmExclBtn) {
-      const fid = rmExclBtn.dataset.removeExcluded;
-      const set = new Set(state.prefs.excludedFolderIds || []);
-      set.delete(fid);
+      const willExclude = !set.has(fid);
+      if (willExclude) set.add(fid);
+      else set.delete(fid);
       state.prefs.excludedFolderIds = Array.from(set);
       rebuildExcludedKeySet();
       await savePreferences({ excludedFolderIds: state.prefs.excludedFolderIds });
@@ -3245,16 +3345,17 @@ function bindEvents() {
       renderSidebar();
       renderTidyContent();
       renderGallery();
+      renderBatchBanner();
       if (prevY > 0) requestAnimationFrame(() => window.scrollTo(0, prevY));
       const folderTitle = state.folderMap.get(fid)?.title || '';
-      showToast(`已恢复「${folderTitle}」的封面展示`);
+      showToast(willExclude ? `已跳过「${folderTitle}」封面` : `已恢复「${folderTitle}」封面`);
       return;
     }
 
     // 6. Trigger quiet background backfill from Settings (requires opt-in remoteCoverEnabled)
     if (e.target.closest('#btn-silent-backfill')) {
       if (!state.prefs.remoteCoverEnabled) {
-        showToast('请先开启「远程补齐封面」');
+        showToast('请先选择「补齐公网封面」');
         return;
       }
       const missing = getMissingCapturableBookmarks();
@@ -3284,11 +3385,13 @@ function bindEvents() {
       state.objectUrlCache.clear();
       state.thumbMeta = new Map();
       state.tidy.stats = { count: 0, totalBytes: 0 };
-      state.prefs.initialCapturePrompted = false;
-      await savePreferences({ initialCapturePrompted: false });
+      state.prefs.bannerHintDismissed = false;
+      state.prefs.missingBannerSnoozeUntil = 0;
+      await savePreferences({ bannerHintDismissed: false, missingBannerSnoozeUntil: 0 });
       renderSidebar();
       renderTidyContent();
       renderGallery();
+      renderBatchBanner();
       showToast('已清空本地首屏缓存');
     }
   });
@@ -3326,7 +3429,6 @@ function bindEvents() {
 
     if (e.key === 'Escape') {
       if (!els.editBookmarkOverlay.hidden) closeEditBookmarkModal();
-      else if (!els.onboardingOverlay.hidden) closeOnboardingPrompt();
       else if (state.spotlight.open) closeSpotlight();
       else if (state.tidy.open) closeTidyDrawer();
       else {
@@ -3336,7 +3438,7 @@ function bindEvents() {
       return;
     }
 
-    if (isTyping || !els.editBookmarkOverlay.hidden || !els.onboardingOverlay.hidden || state.spotlight.open || state.tidy.open) return;
+    if (isTyping || !els.editBookmarkOverlay.hidden || state.spotlight.open || state.tidy.open) return;
 
     if (e.key === '[' || ((e.metaKey || e.ctrlKey) && e.key === '\\')) {
       e.preventDefault();
@@ -3851,6 +3953,12 @@ function initCustomCursor() {
 
 // --- Bootstrap ---
 async function init() {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('onboarding') === '1') {
+    window.location.replace('welcome.html');
+    return;
+  }
+
   state.prefs = await loadPreferences();
   bindEvents();
   initOverlayScrollbars();
@@ -3866,7 +3974,7 @@ async function init() {
   });
 
   // In HTTP preview mode outside Chrome Extension, seed realistic canvas thumbnails once
-  if (!IS_EXTENSION) {
+  if (!IS_EXTENSION && urlParams.get('empty-covers') !== '1') {
     await seedMockThumbnailsIfNeeded();
   }
 
@@ -3884,8 +3992,20 @@ async function init() {
       state.thumbMeta.set(msg.key, { capturedAt: msg.capturedAt, size: msg.size, status: 'ok' });
       await refreshLiveCardsForKey(msg.key);
       renderSidebar();
+      renderBatchBanner();
     } else if (msg.type === 'BATCH_PROGRESS') {
+      const wasRunning = state.batch.running;
       state.batch = msg;
+      if (msg.running) {
+        clearBannerDone();
+      } else if (wasRunning && msg.captured > 0) {
+        clearBannerDone();
+        state.bannerDone = { captured: msg.captured, failed: msg.failed || 0 };
+        bannerDoneTimer = setTimeout(() => {
+          state.bannerDone = null;
+          renderBatchBanner();
+        }, 6000);
+      }
       renderBatchBanner();
     }
   });
@@ -3894,10 +4014,20 @@ async function init() {
   const batchState = await sendBackgroundMessage({ type: 'GET_BATCH_STATE' });
   if (batchState && batchState.running) {
     state.batch = batchState;
-    renderBatchBanner();
-  } else {
-    maybeShowOnboardingPrompt();
   }
+
+  // Trigger simulated backfill seamlessly when arriving from welcome.html in HTTP preview mode
+  if (!IS_EXTENSION && urlParams.get('autobackfill') === '1') {
+    if (window.history?.replaceState) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    const items = getCapturablePublicBookmarks().slice(0, 6);
+    if (items.length > 0) {
+      sendBackgroundMessage({ type: 'START_BATCH_CAPTURE', items, force: false });
+    }
+  }
+
+  renderBatchBanner();
   // Pre-warm WebGL2 shader & optical lens map on idle so first Spotlight trigger has 0ms delay
   if (typeof requestIdleCallback === 'function') {
     requestIdleCallback(() => warmShockwaveEngine(), { timeout: 600 });

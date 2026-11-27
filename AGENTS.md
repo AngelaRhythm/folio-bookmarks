@@ -35,16 +35,19 @@ Preserve these five invariants unless the user explicitly asks to change them:
 ```text
 folio-bookmarks/
 ├── manifest.json                 # MV3 manifest, permissions, newtab override, ESM background worker
-├── newtab.html                   # Page skeleton, shared OKLCH SVG <defs>, sidebar, workspace, split Settings pane, modals
+├── newtab.html                   # Page skeleton, shared OKLCH + Nucleo mono SVG <defs>, sidebar, workspace, unified banner, split Settings pane, modals
+├── welcome.html                  # Standalone single-screen visual onboarding page (auto-opened on fresh install)
 ├── styles/
-│   └── folio.css                 # Full design system: OKLCH Light/Dark tokens, layout, components, custom cursor & scrollbars
+│   ├── folio.css                 # Full design system: OKLCH Light/Dark tokens, shared visual preference widgets, layout, components, custom cursor & scrollbars
+│   └── welcome.css               # Welcome page stage layout, top bar, and responsive breakpoints (inherits shared widgets from folio.css)
 ├── icons/                        # Extension PNG icons (16 / 32 / 48 / 128 px)
 ├── src/
-│   ├── app.js                    # UI controller: tree model, gallery, favorites, DnD, Spotlight, Settings, scrollbar, custom cursor
-│   ├── newtab-gate.js            # Early <head> launch gate: falls back to chrome://new-tab-page/ when launchOnNewTab is OFF
+│   ├── app.js                    # UI controller: tree model, gallery, unified status banner, favorites, DnD, Spotlight, Settings, scrollbar, custom cursor
+│   ├── welcome.js                # Standalone onboarding controller: live Chrome bar preview, cover mode cards, folder skip chips, skip/finish flows
+│   ├── newtab-gate.js            # Early <head> launch gate & sidebar collapse boot guard (handles ?source=install & launchOnNewTab fallback)
 │   ├── shockwave.js              # WebGL2 Shockwave Glow renderer triggered on Spotlight search activation
-│   ├── background.js             # MV3 Service Worker: launch mode routing (action/startup/shortcut), local capture, opt-in remote queue, alarms
-│   ├── icons.js                  # Dual icon registry: Nucleo Glass (left sidebar) + Tabler Icons (all other controls)
+│   ├── background.js             # MV3 Service Worker: install onboarding auto-open, launch routing, local capture, opt-in remote queue, alarms
+│   ├── icons.js                  # Dual icon registry: Nucleo Glass (sidebar/chips) + Tabler Icons (controls) + vector SVG shortcut keycap helper
 │   └── shared/
 │       ├── chrome-bridge.js      # Unified Chrome API / HTTP preview mock adapter + preferences load/save
 │       ├── db.js                 # IndexedDB wrapper (folio_bookmark_gallery / thumbnails)
@@ -70,11 +73,13 @@ folio-bookmarks/
 | Modify Favorites quick rail | `src/app.js`, `styles/folio.css` | `syncFavoritesSection()`, `toggleFavoriteKey()`, `.favorites-rail` |
 | Modify card context menu or Edit Bookmark modal | `newtab.html`, `src/app.js`, `src/shared/chrome-bridge.js`, `styles/folio.css` | `#card-context-menu`, `#edit-bookmark-overlay`, `openBookmarkInSplitView()`, `updateBookmark()` |
 | Edit Spotlight search or IME behavior | `src/app.js`, `newtab.html`, `styles/folio.css` | `openSpotlight()`, `updateSpotlightResults()`, `spotlightComposing` |
-| Add/edit Settings controls or Health tab | `src/app.js`, `styles/folio.css` | `renderTidyContent()`, `els.tidyContent` click/change listeners |
+| Modify standalone onboarding page | `welcome.html`, `styles/welcome.css`, `src/welcome.js`, `src/background.js` | `finishOnboarding()`, `renderLaunchList()`, `renderCoverAndFolders()`, `onInstalled` |
+| Edit unified status & guidance banner | `newtab.html`, `src/app.js`, `styles/folio.css`, `src/shared/chrome-bridge.js` | `#batch-banner`, `renderBatchBanner()`, `bannerHintDismissed`, `missingBannerSnoozeUntil` |
+| Add/edit Settings controls or Health tab | `src/app.js`, `styles/folio.css` | `renderTidyContent()`, `.welcome-browser-mock`, `.welcome-mode-cards`, `.welcome-folder-chips`, `els.tidyContent` listeners |
 | Change exclusion or URL sanitization rules | `src/shared/url.js`, `src/background.js`, `src/app.js` | `isPrivateOrInternalUrl()`, `toSafePublicOrigin()`, `rebuildExcludedKeySet()` |
 | Change thumbnail size / WebP quality / TTL | `src/background.js` | `TARGET_WIDTH`, `TARGET_HEIGHT`, `compressBlobToWebP()`, `DEFAULT_REFRESH_DAYS` |
-| Change sidebar icons (Nucleo Glass) | `src/icons.js`, `src/app.js`, `newtab.html` | `ICONS.glass*`, `getSidebarFolderIcon()`, `<svg><defs>` gradients |
-| Change UI control icons (Tabler) | `src/icons.js`, `src/app.js` | `ICONS.*` (24x24, 1.75px round stroke) |
+| Change sidebar icons (Nucleo Glass) | `src/icons.js`, `src/app.js`, `newtab.html`, `styles/folio.css` | `ICONS.glass*`, `getSidebarFolderIcon()`, `<svg><defs>` (`#ng-*` & resting `#ng-mono*`) |
+| Change UI control icons & shortcut keycaps | `src/icons.js`, `src/app.js`, `styles/folio.css` | `ICONS.*` (Tabler 24x24), `renderShortcutKeycapsHtml()`, `.kbd-group` / `.kbd-cap` |
 | Edit theme colors / borders / typography | `styles/folio.css` | `:root`, `[data-theme="dark"]`, `--border-hairline` (`0.5px`) |
 | Edit sidebar bottom isometric boxes | `src/app.js`, `styles/folio.css`, `newtab.html` | `initSidebarBackgroundBoxes()`, `#sidebar-bg-boxes` |
 | Edit floating overlay scrollbars | `src/app.js`, `styles/folio.css` | `initOverlayScrollbars()`, `suppressOverlayScrollbars()`, `.folio-scrollbar` |
@@ -112,6 +117,7 @@ folio-bookmarks/
 ### 5.1 Syntax & Security Unit Check
 ```bash
 node --check src/app.js && \
+node --check src/welcome.js && \
 node --check src/newtab-gate.js && \
 node --check src/background.js && \
 node --check src/icons.js && \
@@ -138,9 +144,9 @@ console.log('SECURITY_OK');
 ```bash
 python3 -m http.server 8765 --bind 127.0.0.1
 ```
-- Normal gallery: `http://127.0.0.1:8765/newtab.html`
-- First-time welcome modal: `http://127.0.0.1:8765/newtab.html?onboarding=1`
+- Normal gallery: `http://127.0.0.1:8765/newtab.html` (append `?theme=light` or `?theme=dark` to force a specific theme during QA)
+- Standalone onboarding page: `http://127.0.0.1:8765/welcome.html` (`newtab.html?onboarding=1` also redirects here)
 
 ### 5.3 Real Chrome Extension Reload Rules
-- Edits to `newtab.html`, `styles/folio.css`, `src/app.js`, `src/icons.js`, or `src/shared/*`: press `Cmd + R` (`Ctrl + R`) on the New Tab page.
+- Edits to `newtab.html`, `welcome.html`, `styles/*.css`, `src/app.js`, `src/welcome.js`, `src/icons.js`, or `src/shared/*`: press `Cmd + R` (`Ctrl + R`) on the page.
 - Edits to `manifest.json` or `src/background.js`: open `chrome://extensions/` and click the reload (`↻`) button on the Folio card to restart the MV3 Service Worker.

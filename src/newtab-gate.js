@@ -18,7 +18,7 @@
 
   const params = new URLSearchParams(window.location.search);
   const source = params.get('source');
-  if (source === 'action' || source === 'startup' || source === 'shortcut') {
+  if (source === 'action' || source === 'startup' || source === 'shortcut' || source === 'install') {
     try {
       sessionStorage.setItem('folio_explicit_tab', '1');
       // Keep address bar clean while preserving explicit-tab status across Cmd+R reloads
